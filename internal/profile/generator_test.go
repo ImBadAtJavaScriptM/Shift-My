@@ -4,7 +4,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"net"
-	"strings"
 	"testing"
 
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/pki"
@@ -33,9 +32,6 @@ func TestGenerateBuildsRemovableControlledDomainProfile(t *testing.T) {
 		MatchDomains: matchDomains,
 	})
 	if err != nil { t.Fatal(err) }
-	if strings.Contains(string(data), ".apple.com") {
-		t.Fatal("profile must not target Apple production domains")
-	}
 
 	var root map[string]any
 	if _, err := plist.Unmarshal(data, &root); err != nil { t.Fatal(err) }
@@ -66,6 +62,20 @@ func TestGenerateBuildsRemovableControlledDomainProfile(t *testing.T) {
 	}
 	assertStringArray(t, dnsSettings["ServerAddresses"], []string{"203.0.113.10"})
 	assertStringArray(t, dnsSettings["SupplementalMatchDomains"], matchDomains)
+}
+
+func TestGenerateRejectsProductionAppleDomain(t *testing.T) {
+	_, err := Generate(Config{
+		DisplayName:  "Shift-My Test",
+		PublicHost:   "apple.com",
+		PublicIPv4:   net.ParseIP("203.0.113.10"),
+		Token:        "token-1",
+		RootCertDER:  []byte{1},
+		MatchDomains: []string{"gs-loc.apple.com"},
+	})
+	if err == nil {
+		t.Fatal("expected production Apple domain to be rejected")
+	}
 }
 
 func payloadByType(t *testing.T, payloads []any, want string) map[string]any {
