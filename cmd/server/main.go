@@ -8,9 +8,12 @@ import (
 
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/config"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/dashboard"
+	"github.com/ImBadAtJavaScriptM/Shift-My/internal/doh"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/location"
+	"github.com/ImBadAtJavaScriptM/Shift-My/internal/netpolicy"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/pki"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/profile"
+	publicserver "github.com/ImBadAtJavaScriptM/Shift-My/internal/server"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/storage"
 )
 
@@ -33,6 +36,10 @@ func main() {
 		log.Fatal(err)
 	}
 
+	policy, err := netpolicy.NewControlled(cfg.PublicHost)
+	if err != nil {
+		log.Fatal(err)
+	}
 	authority, err := pki.Load(cfg.CACertPath, cfg.CAKeyPath)
 	if err != nil {
 		log.Fatal(err)
@@ -42,11 +49,14 @@ func main() {
 		PublicHost:   cfg.PublicHost,
 		PublicIPv4:   cfg.PublicIPv4,
 		RootCertDER:  authority.RootDER(),
-		MatchDomains: profile.LabDomains(cfg.PublicHost),
+		MatchDomains: policy.Hosts(),
 	}
-	handler := dashboard.New(store, location.New(store), dashboard.WithProfileConfig(profileCfg))
+	dashboardHandler := dashboard.New(store, location.New(store), dashboard.WithProfileConfig(profileCfg))
+	dohHandler := doh.New(store, cfg.PublicIPv4, policy)
+	handler := publicserver.NewPublic(dashboardHandler, dohHandler)
+
 	const addr = "127.0.0.1:8080"
-	log.Printf("Shift-My test dashboard listening on http://%s", addr)
+	log.Printf("Shift-My controlled test server listening on http://%s", addr)
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatal(err)
 	}
