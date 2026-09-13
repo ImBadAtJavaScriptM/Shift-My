@@ -47,10 +47,12 @@ The recovered ShiftMy profile gave us several architectural clues:
 - a profile-installed root CA;
 - a per-enrollment identifier embedded in a DoH URL;
 - an ACME-based hardware-bound device identity in the production service;
-- a follow-on standard profile;
+- a declarative bootstrap that referenced a follow-on standard profile;
 - a user action that cycles Location Services after changing the selected location.
 
 For v1, the ACME/device-attestation layer is intentionally deferred. It is not required to answer the first feasibility question: can a clean-room selective-DNS + trusted-CA path produce a changed system location on our own stock iPhone?
+
+The recovered declarative bootstrap pattern remains an explicit fallback if current iOS will not activate the minimal manually installed DNS payload we try first.
 
 ## 5. Architecture decision
 
@@ -72,6 +74,7 @@ Application stack:
 - configuration-profile generator;
 - DNS-over-HTTPS endpoint;
 - narrow TLS reverse-proxy/inspection component for the experiment;
+- SNI edge router so multiple TLS roles can share one public IPv4 address and port 443;
 - structured request/response logging with secrets and precise user coordinates omitted from normal logs.
 
 This single-host architecture is preferred because it is cheapest, simplest to debug, and keeps all packet-flow components under one administrative boundary.
@@ -82,7 +85,8 @@ Planned top-level layout:
 
 ```text
 cmd/
-  server/             main process
+  server/             main application process
+  edge/               SNI routing entry point if kept separate
 internal/
   config/             environment and runtime config
   dashboard/          web UI and API handlers
@@ -97,7 +101,7 @@ web/
   templates/
 deploy/
   systemd/
-  nginx-or-caddy/
+  edge/
   scripts/
 docs/
   superpowers/specs/
@@ -122,6 +126,7 @@ profile_token
 selected_latitude
 selected_longitude
 selected_label
+location_revision
 last_seen_at
 ```
 
@@ -137,6 +142,14 @@ A project-owned test root CA is installed on the test iPhone so the proxy can pr
 
 The CA private key never ships in the profile and never leaves the server.
 
+For a manually downloaded profile, current iOS may require the user to additionally enable SSL/TLS trust under:
+
+`Settings -> General -> About -> Certificate Trust Settings`
+
+Therefore the prototype setup UI must detect this as a separate checkpoint rather than assuming profile installation alone establishes TLS trust.
+
+If testing demonstrates that the clean-room declarative installation path can establish the required trust without this manual step, the extra prompt can later be removed.
+
 ### Managed DNS payload
 
 Configure DNS-over-HTTPS only for the narrow Apple location-related domains identified during the clean-room analysis.
@@ -145,11 +158,22 @@ All unrelated DNS continues through the user's normal resolver.
 
 The DoH URL contains the installation token so the backend can associate DNS activity with the current selected coordinates.
 
+### DNS activation fallback
+
+Because current Apple deployment documentation treats the managed DNS payload primarily as a device-management configuration, v1 must not assume a manually downloaded minimal profile will activate it on every stock-iPhone configuration.
+
+The test order is:
+
+1. try the smallest direct profile matching the relevant payload shape already observed on our test device;
+2. verify actual DoH traffic server-side;
+3. if the payload installs but no traffic appears, reproduce the clean-room declarative bootstrap/follow-on-profile pattern observed in the ShiftMy configuration rather than adding unrelated MDM infrastructure;
+4. keep ACME/device attestation deferred unless evidence shows it is required for this activation path.
+
 ### Removal
 
 The profile must remain removable by the user.
 
-The project must also include a clear uninstall/reset procedure that removes the profile and restores normal DNS behavior.
+The project must also include a clear uninstall/reset procedure that removes the profile, removes any test root trust, and restores normal DNS behavior.
 
 ## 9. Location-change flow
 
@@ -158,18 +182,19 @@ The intended user flow is:
 1. Open the Shift-My dashboard.
 2. Download the generated configuration profile.
 3. Install the profile through iPhone Settings.
-4. Confirm the dashboard reports recent device/DNS activity.
-5. Search for or enter a target location.
-6. Press `Set Location`.
-7. Backend commits the new coordinates and increments a location revision number.
-8. UI displays an explicit refresh instruction:
+4. If required by the prototype trust path, enable full trust for the Shift-My test root certificate.
+5. Confirm the dashboard reports recent device/DNS activity.
+6. Search for or enter a target location.
+7. Press `Set Location`.
+8. Backend commits the new coordinates and increments a location revision number.
+9. UI displays an explicit refresh instruction:
    - Settings -> Privacy & Security -> Location Services;
    - turn Location Services off;
    - wait briefly;
    - turn Location Services back on.
-9. Open Apple Maps and observe the blue dot.
-10. If Apple Maps succeeds, validate a second Location Services app.
-11. Finally test Find My.
+10. Open Apple Maps and observe the blue dot.
+11. If Apple Maps succeeds, validate a second Location Services app.
+12. Finally test Find My.
 
 The Location Services off/on cycle is a first-class part of the v1 test because the observed commercial service used a similar refresh step after setting a new target location.
 
@@ -183,7 +208,8 @@ Main screen:
 SHIFT-MY TEST
 
 Device status: Connected / Not seen
-Profile status: Generated
+Profile status: Generated / Traffic seen
+Certificate trust: Unknown / Confirmed by successful TLS
 Target location: Burbank, CA
 Coordinates: 34.x, -118.x
 
@@ -201,6 +227,8 @@ Next step
 Cycle Location Services off -> on, then open Apple Maps.
 ```
 
+`Profile status` is inferred from traffic. The server cannot claim that an unsupervised device installed the profile merely because the file was downloaded.
+
 No account system, billing system, social features, maps history, or multi-device management are included in v1.
 
 ## 11. DNS behavior
@@ -214,7 +242,26 @@ The service must not become an open public resolver.
 
 Requests are accepted only when the path includes a valid installation token.
 
-## 12. TLS proxy behavior
+The generated profile should include the VM address as a server address when appropriate so the DoH hostname does not depend on the very resolver being configured.
+
+## 12. Port 443 and SNI routing
+
+One public IPv4 address must serve two different TLS roles:
+
+1. the normal public hostname used by the dashboard and DoH endpoint;
+2. the allowlisted Apple location hostnames routed to the experiment proxy.
+
+An edge listener on TCP/443 inspects SNI without decrypting traffic and dispatches connections:
+
+- project hostname -> public HTTPS application listener;
+- explicit Apple location hostname allowlist -> experiment proxy listener;
+- everything else -> reject.
+
+This avoids requiring multiple public IP addresses and keeps the $0 prototype architecture practical.
+
+The first prototype does not advertise or intentionally support QUIC/HTTP3 on UDP/443. If the target Apple service attempts QUIC, the experiment records that behavior and relies on normal TCP fallback where available before adding any UDP complexity.
+
+## 13. TLS proxy behavior
 
 The proxy listens for connections intended for only the explicit Apple location host allowlist used by the experiment.
 
@@ -228,9 +275,9 @@ For those hosts it:
 
 The proxy is not a general-purpose interception proxy.
 
-All other hostnames are rejected or bypassed.
+All other hostnames are rejected.
 
-## 13. Protocol discovery and transformation
+## 14. Protocol discovery and transformation
 
 The first server-side milestone is not to guess Apple's payload format. It is to observe the real request and response generated by our own test device after the profile is installed.
 
@@ -244,7 +291,14 @@ Confirm the iPhone sends the target hostnames through our DoH service.
 
 Confirm the target iPhone accepts the project-issued leaf certificate for the target system request and the request reaches the proxy.
 
-If this fails, record the exact trust failure before changing architecture.
+If this fails, distinguish among:
+
+- root not fully trusted;
+- certificate/SAN generation error;
+- certificate pinning or a restricted trust policy;
+- request not using the expected hostname/path.
+
+Record the exact failure before changing architecture.
 
 ### Checkpoint C - transparent forwarding
 
@@ -266,17 +320,28 @@ Replace only the relevant returned location fields with the dashboard-selected l
 
 After changing the selected coordinates, cycle Location Services off and back on and verify Apple Maps.
 
-## 14. Unknowns and failure handling
+## 15. Unknowns and failure handling
 
-The largest unknown is whether current iOS system location traffic accepts a user/profile-installed test root for this path and whether the Apple response includes integrity protections that prevent modification.
+The largest unknowns are:
 
-The architecture intentionally makes that unknown measurable.
+- whether current iOS activates the selective managed-DNS payload through our minimal stock-iPhone installation path;
+- whether the system location traffic accepts the project test root after full trust is enabled;
+- whether the Apple response includes integrity protections that prevent modification;
+- whether Find My uses the same location source/path as Apple Maps.
+
+The architecture intentionally makes each unknown measurable.
+
+If DNS activation fails:
+
+- verify the payload is present;
+- reproduce the recovered declarative bootstrap/follow-on-profile pattern;
+- introduce ACME/device identity only if the evidence says activation depends on it.
 
 If TLS fails:
 
 - capture the exact failure condition;
 - compare the working commercial profile behavior on our own device;
-- determine whether the missing piece is profile trust, client identity, endpoint selection, or another documented configuration mechanism.
+- determine whether the missing piece is profile trust, client identity, endpoint selection, or another configuration mechanism.
 
 If transparent proxying succeeds but transformed responses are rejected:
 
@@ -289,7 +354,7 @@ If Apple Maps succeeds but Find My does not:
 - treat Find My as a separate compatibility target rather than declaring the entire experiment failed;
 - identify whether it uses a different source, cache, process, or trust path.
 
-## 15. Security boundaries
+## 16. Security boundaries
 
 - Test only devices the user owns or controls.
 - Do not reuse ShiftMy certificates, secrets, tokens, or private infrastructure.
@@ -301,24 +366,27 @@ If Apple Maps succeeds but Find My does not:
 - Store only data required for the test.
 - Do not store a history of real physical locations.
 - Selected target coordinates may be deleted/reset from the dashboard.
+- Diagnostic body capture is disabled by default and, when temporarily enabled for protocol discovery on the user's own device, should have size limits and an explicit deletion path.
 
-## 16. Deployment
+## 17. Deployment
 
 The deployment should be reproducible from the repository.
 
 Expected deployment shape:
 
 - Ubuntu VM;
-- systemd service for Shift-My;
+- systemd services for Shift-My components;
 - firewall allowing only required ports;
-- TLS certificate for the public dashboard/DoH hostname;
+- SNI edge listener on TCP/443;
+- public TLS certificate for the dashboard/DoH hostname;
+- separate project test CA used only for the narrow experiment proxy;
 - SQLite database under a dedicated application directory;
 - environment file containing secrets and CA paths;
 - one bootstrap script for a fresh VM.
 
 The public dashboard certificate is separate from the project test CA used for the narrow experiment proxy.
 
-## 17. Testing strategy
+## 18. Testing strategy
 
 ### Unit tests
 
@@ -327,12 +395,15 @@ The public dashboard certificate is separate from the project test CA used for t
 - target-host allowlist;
 - coordinate storage;
 - DNS response construction;
+- SNI route selection;
 - protocol parser/serializer once discovered;
 - kill-switch behavior.
 
 ### Integration tests
 
 - DoH request -> selected IP response;
+- SNI project hostname -> public app;
+- SNI allowlisted Apple hostname -> experiment proxy;
 - TLS proxy -> upstream forwarding;
 - profile generated with correct token and endpoint;
 - location update increments revision and is visible to proxy.
@@ -340,17 +411,18 @@ The public dashboard certificate is separate from the project test CA used for t
 ### Device test sequence
 
 1. Install profile.
-2. Verify DoH traffic.
-3. Verify trusted TLS path.
-4. Verify unchanged upstream forwarding.
-5. Set a clearly distant target location.
-6. Cycle Location Services off/on.
-7. Open Apple Maps.
-8. Record pass/fail and diagnostic stage.
-9. Test a second app if Maps passes.
-10. Test Find My last.
+2. Enable test-root trust if required.
+3. Verify DoH traffic.
+4. Verify trusted TLS path.
+5. Verify unchanged upstream forwarding.
+6. Set a clearly distant target location.
+7. Cycle Location Services off/on.
+8. Open Apple Maps.
+9. Record pass/fail and diagnostic stage.
+10. Test a second app if Maps passes.
+11. Test Find My last.
 
-## 18. Milestones
+## 19. Milestones
 
 ### M1 - repository and local skeleton
 
@@ -366,10 +438,13 @@ The public dashboard certificate is separate from the project test CA used for t
 - profile generator;
 - tokenized DoH endpoint;
 - target-domain routing;
+- direct-profile activation test;
+- declarative bootstrap fallback if required;
 - uninstall/reset documentation.
 
-### M3 - transparent proxy
+### M3 - edge and transparent proxy
 
+- TCP/443 SNI router;
 - allowlisted TLS proxy;
 - dynamic leaf certificates from project CA;
 - clean forwarding to Apple origin;
@@ -393,14 +468,14 @@ The public dashboard certificate is separate from the project test CA used for t
 - Find My;
 - document which surfaces pass and which remain unsupported.
 
-## 19. v1 definition of done
+## 20. v1 definition of done
 
 v1 is considered technically complete when all of the following exist:
 
 - reproducible deployment on the free VM;
 - installable/removable profile;
-- tokenized selective DoH routing;
-- narrow trusted TLS proxy for the test device;
+- tokenized selective DoH routing or a clearly diagnosed iOS activation barrier;
+- narrow trusted TLS proxy for the test device or a clearly diagnosed trust-policy barrier;
 - working dashboard target selector;
 - explicit Location Services off/on refresh flow;
 - end-to-end Apple Maps test result;
@@ -409,12 +484,12 @@ v1 is considered technically complete when all of the following exist:
 
 The aspirational success condition remains system-wide propagation to Apple Maps, ordinary Location Services apps, and Find My.
 
-## 20. Deferred work
+## 21. Deferred work
 
 Do not build these until the core mechanism is proven:
 
-- ACME device attestation;
-- hardware-bound client identity;
+- ACME device attestation unless M2 evidence makes it necessary;
+- hardware-bound client identity unless M2 evidence makes it necessary;
 - multiple users;
 - multiple devices;
 - subscriptions or billing;
