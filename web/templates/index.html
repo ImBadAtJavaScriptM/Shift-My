@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shift-My Test Lab</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <p class="eyebrow">CONTROLLED LOCATION LAB</p>
+      <h1>Shift-My Test</h1>
+      <p class="subtle">A stock-iPhone configuration-profile and networking experiment using only endpoints we control.</p>
+    </header>
+
+    <section class="grid status-grid" aria-label="experiment status">
+      <article class="card"><span>Profile</span><strong id="profile-status">generated</strong></article>
+      <article class="card"><span>DoH</span><strong id="doh-status">waiting</strong></article>
+      <article class="card"><span>TLS test proxy</span><strong id="proxy-status">waiting</strong></article>
+      <article class="card"><span>Revision</span><strong id="revision">0</strong></article>
+    </section>
+
+    <section class="card target-card">
+      <h2>Target coordinates</h2>
+      <form id="location-form">
+        <label>Label<input id="label" name="label" placeholder="Times Square"></label>
+        <div class="coords">
+          <label>Latitude<input id="latitude" name="latitude" inputmode="decimal" type="number" min="-90" max="90" step="any" required></label>
+          <label>Longitude<input id="longitude" name="longitude" inputmode="decimal" type="number" min="-180" max="180" step="any" required></label>
+        </div>
+        <button type="submit">Set target</button>
+        <p id="save-message" class="subtle" role="status"></p>
+      </form>
+    </section>
+
+    <section class="card next-card">
+      <h2>Next step</h2>
+      <ol>
+        <li>Open <strong>Settings → Privacy &amp; Security → Location Services</strong>.</li>
+        <li>Turn Location Services off, wait 5 seconds, then turn it back on.</li>
+        <li>Run the controlled test client against our own lab endpoint.</li>
+      </ol>
+      <p class="warning">This lab does not intercept or modify Apple, Find My, or third-party production location services.</p>
+    </section>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
