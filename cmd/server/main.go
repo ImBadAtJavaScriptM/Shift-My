@@ -9,6 +9,8 @@ import (
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/config"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/dashboard"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/location"
+	"github.com/ImBadAtJavaScriptM/Shift-My/internal/pki"
+	"github.com/ImBadAtJavaScriptM/Shift-My/internal/profile"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/storage"
 )
 
@@ -31,7 +33,18 @@ func main() {
 		log.Fatal(err)
 	}
 
-	handler := dashboard.New(store, location.New(store))
+	authority, err := pki.Load(cfg.CACertPath, cfg.CAKeyPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	profileCfg := profile.Config{
+		DisplayName:  "Shift-My Test",
+		PublicHost:   cfg.PublicHost,
+		PublicIPv4:   cfg.PublicIPv4,
+		RootCertDER:  authority.RootDER(),
+		MatchDomains: profile.LabDomains(cfg.PublicHost),
+	}
+	handler := dashboard.New(store, location.New(store), dashboard.WithProfileConfig(profileCfg))
 	const addr = "127.0.0.1:8080"
 	log.Printf("Shift-My test dashboard listening on http://%s", addr)
 	if err := http.ListenAndServe(addr, handler); err != nil {
