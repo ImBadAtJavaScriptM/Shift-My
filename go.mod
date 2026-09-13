@@ -3,6 +3,7 @@ module github.com/ImBadAtJavaScriptM/Shift-My
 go 1.22
 
 require (
+	github.com/miekg/dns v1.1.62
 	howett.net/plist v1.0.1
 	modernc.org/sqlite v1.33.1
 )
