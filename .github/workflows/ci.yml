@@ -11,7 +11,8 @@ jobs:
         with:
           go-version: '1.22.x'
           cache: false
-      - run: go mod download
+      - run: go mod tidy
+      - run: cat go.mod
       - run: cat go.sum
       - run: go test ./...
       - run: go vet ./...
