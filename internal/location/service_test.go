@@ -1,5 +1,7 @@
 package location
 
+// Task 2 RED tests: implementation intentionally follows this commit.
+
 import (
     "testing"
 
