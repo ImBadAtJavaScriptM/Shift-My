@@ -14,7 +14,7 @@ func TestPublicHandlerRequiresDashboardAuthentication(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnauthorized { t.Fatalf("status=%d", rr.Code) }
-	if got := rr.Header().Get("WWW-Authenticate"); got != `Basic realm="Shift-My Lab", charset="UTF-8"` {
+	if got := rr.Header().Get("WWW-Authenticate"); got != "Basic realm=\"Shift-My Lab\", charset=\"UTF-8\"" {
 		t.Fatalf("WWW-Authenticate=%q", got)
 	}
 }
