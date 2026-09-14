@@ -10,7 +10,7 @@ The configured public hostname serves:
 - `POST /api/location` — update the selected test coordinate
 - `GET|POST /dns-query/<profile-token>` — RFC 8484 DNS-over-HTTPS
 
-The public handler rejects any other Host header with HTTP 421.
+The dashboard, profile, static assets, and `/api/*` routes require HTTP Basic authentication with username `shiftmy` and the server-configured admin password. The DoH route is intentionally exempt from Basic auth because the installed profile authenticates it with an independent high-entropy URL token. The public handler rejects any unexpected Host header with HTTP 421.
 
 ## Managed DNS scope
 
