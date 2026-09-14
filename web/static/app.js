@@ -16,6 +16,10 @@ async function refreshStatus() {
   renderStatus(await response.json());
 }
 
+const labURL = `https://device-loc.${window.location.hostname}/v1/location`;
+$('lab-url').href = labURL;
+$('lab-url').textContent = labURL;
+
 $('location-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const message = $('save-message');
@@ -32,7 +36,7 @@ $('location-form').addEventListener('submit', async (event) => {
     });
     if (!response.ok) throw new Error(await response.text());
     renderStatus(await response.json());
-    message.textContent = 'Target saved. Refresh Location Services before the next controlled test.';
+    message.textContent = 'Target saved. Open the controlled lab endpoint to verify this revision.';
   } catch (error) {
     message.textContent = `Could not save target: ${String(error.message || error)}`;
   }
