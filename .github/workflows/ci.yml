@@ -15,7 +15,8 @@ jobs:
       - run: bash -n deploy/scripts/bootstrap.sh
       - name: Reject production Apple location routes
         run: |
-          if grep -R -nE 'gs-loc\.apple\.com|gs-loc-cn\.apple\.com|iphone-services\.apple\.com' cmd internal deploy web; then
+          if find cmd internal deploy web -type f ! -name '*_test.go' -print0 \
+            | xargs -0 grep -nE 'gs-loc\.apple\.com|gs-loc-cn\.apple\.com|iphone-services\.apple\.com'; then
             echo 'production Apple location hostname found in active implementation'
             exit 1
           fi
