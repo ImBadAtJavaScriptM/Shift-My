@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ImBadAtJavaScriptM/Shift-My/internal/capture"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/netpolicy"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/pki"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/storage"
@@ -20,10 +21,15 @@ type Server struct {
 	authority *pki.Authority
 	store     *storage.Store
 	policy    netpolicy.Policy
+	recorder  capture.Recorder
 }
 
 func New(authority *pki.Authority, store *storage.Store, policy netpolicy.Policy) *Server {
 	return &Server{authority: authority, store: store, policy: policy}
+}
+
+func NewWithRecorder(authority *pki.Authority, store *storage.Store, policy netpolicy.Policy, recorder capture.Recorder) *Server {
+	return &Server{authority: authority, store: store, policy: policy, recorder: recorder}
 }
 
 func (s *Server) CertificateForHost(host string) (*tls.Certificate, error) {
@@ -49,6 +55,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	requestMeta := capture.Metadata{
+		Host: host, Method: r.Method, Path: r.URL.Path, ContentType: r.Header.Get("Content-Type"),
+		Protocol: r.Proto, BodyLength: r.ContentLength, Headers: r.Header.Clone(),
+	}
+	if s.recorder != nil {
+		if err := s.recorder.RecordRequest(requestMeta, nil); err != nil {
+			http.Error(w, "record lab request", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	inst, err := s.store.Installation()
 	if err != nil {
 		http.Error(w, "read installation", http.StatusInternalServerError)
@@ -63,9 +80,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(struct {
+	payload, err := json.Marshal(struct {
 		Latitude  float64 `json:"latitude"`
 		Longitude float64 `json:"longitude"`
 		Label     string  `json:"label"`
@@ -76,6 +91,31 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Label:     inst.SelectedLabel,
 		Revision:  inst.LocationRevision,
 	})
+	if err != nil {
+		http.Error(w, "encode lab response", http.StatusInternalServerError)
+		return
+	}
+	payload = append(payload, '\n')
+	responseHeaders := make(http.Header)
+	responseHeaders.Set("Content-Type", "application/json")
+	responseHeaders.Set("Cache-Control", "no-store")
+	if s.recorder != nil {
+		if err := s.recorder.RecordResponse(capture.Metadata{
+			Host: host, Method: r.Method, Path: r.URL.Path, ContentType: "application/json",
+			Protocol: r.Proto, Status: http.StatusOK, BodyLength: int64(len(payload)), Headers: responseHeaders.Clone(),
+		}, payload); err != nil {
+			http.Error(w, "record lab response", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	for key, values := range responseHeaders {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(payload)
 }
 
 func normalizeHost(host string) string {
