@@ -9,10 +9,29 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ImBadAtJavaScriptM/Shift-My/internal/capture"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/netpolicy"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/pki"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/storage"
 )
+
+type recordingSpy struct {
+	requests  int
+	responses int
+	lastHost  string
+}
+
+func (s *recordingSpy) RecordRequest(meta capture.Metadata, body []byte) error {
+	s.requests++
+	s.lastHost = meta.Host
+	return nil
+}
+
+func (s *recordingSpy) RecordResponse(meta capture.Metadata, body []byte) error {
+	s.responses++
+	s.lastHost = meta.Host
+	return nil
+}
 
 func testServer(t *testing.T) (*Server, *storage.Store) {
 	t.Helper()
@@ -73,6 +92,19 @@ func TestControlledLocationEndpointReturnsStoredTargetAndMarksSeen(t *testing.T)
 	inst, err := store.Installation()
 	if err != nil { t.Fatal(err) }
 	if inst.ProxySeenAt == nil { t.Fatal("expected proxy seen timestamp") }
+}
+
+func TestControlledLocationEndpointCanRecordLabRequestAndResponse(t *testing.T) {
+	srv, _ := testServer(t)
+	spy := &recordingSpy{}
+	srv.recorder = spy
+	req := httptest.NewRequest(http.MethodGet, "https://device-loc.lab.example.test/v1/location", nil)
+	req.Host = "device-loc.lab.example.test"
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK { t.Fatalf("status=%d", rr.Code) }
+	if spy.requests != 1 || spy.responses != 1 { t.Fatalf("requests=%d responses=%d", spy.requests, spy.responses) }
+	if spy.lastHost != "device-loc.lab.example.test" { t.Fatalf("host=%q", spy.lastHost) }
 }
 
 func TestControlledLocationEndpointRejectsWrongHost(t *testing.T) {
