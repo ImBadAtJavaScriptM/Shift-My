@@ -17,12 +17,18 @@
     <section class="grid status-grid" aria-label="experiment status">
       <article class="card"><span>Profile</span><strong id="profile-status">generated</strong></article>
       <article class="card"><span>DoH</span><strong id="doh-status">waiting</strong></article>
-      <article class="card"><span>TLS test proxy</span><strong id="proxy-status">waiting</strong></article>
+      <article class="card"><span>Lab TLS</span><strong id="proxy-status">waiting</strong></article>
       <article class="card"><span>Revision</span><strong id="revision">0</strong></article>
     </section>
 
     <section class="card target-card">
-      <h2>Target coordinates</h2>
+      <h2>1. Install the test profile</h2>
+      <p class="subtle">The profile contains the project test root and managed DoH rules for only the three lab subdomains.</p>
+      <a class="button-link" href="/profile.mobileconfig">Download iPhone profile</a>
+    </section>
+
+    <section class="card target-card">
+      <h2>2. Choose the lab target</h2>
       <form id="location-form">
         <label>Label<input id="label" name="label" placeholder="Times Square"></label>
         <div class="coords">
@@ -35,13 +41,13 @@
     </section>
 
     <section class="card next-card">
-      <h2>Next step</h2>
+      <h2>3. Validate the controlled path</h2>
       <ol>
-        <li>Open <strong>Settings → Privacy &amp; Security → Location Services</strong>.</li>
-        <li>Turn Location Services off, wait 5 seconds, then turn it back on.</li>
-        <li>Run the controlled test client against our own lab endpoint.</li>
+        <li>Confirm the DoH card changes to <strong>seen</strong>.</li>
+        <li>Open <a id="lab-url" href="#">the controlled lab location endpoint</a> on the iPhone.</li>
+        <li>Confirm the returned latitude, longitude, label, and revision match the target above, then confirm Lab TLS changes to <strong>seen</strong>.</li>
       </ol>
-      <p class="warning">This lab does not intercept or modify Apple, Find My, or third-party production location services.</p>
+      <p class="warning">This lab does not intercept, modify, or claim to override Apple Maps, Find My, Core Location, or third-party production location services.</p>
     </section>
   </main>
   <script src="/static/app.js" defer></script>
