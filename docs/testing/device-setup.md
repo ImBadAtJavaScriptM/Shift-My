@@ -5,22 +5,23 @@ These steps validate the Shift-My v1 profile → DoH → controlled TLS path on 
 ## Before the phone
 
 1. Deploy the server on a VPS using a hostname you own.
-2. Confirm `https://<public-host>/` loads normally in Safari or another browser.
-3. In the dashboard, enter a clearly recognizable test coordinate and press **Set target**.
+2. Save the dashboard credentials printed by the bootstrap script. The username is `shiftmy`; the password is randomly generated and stored in `/etc/shift-my/shift-my.env` on the VPS.
+3. Confirm `https://<public-host>/` loads in Safari or another browser and authenticate when prompted.
+4. In the dashboard, enter a clearly recognizable test coordinate and press **Set target**.
 
 ## Install the profile
 
-1. On the iPhone, open `https://<public-host>/` in Safari.
+1. On the iPhone, open `https://<public-host>/` in Safari and authenticate with the dashboard credentials.
 2. Tap **Download iPhone profile** and allow the download.
 3. Open **Settings → General → VPN & Device Management** and select the downloaded **Shift-My Test** profile.
 4. Review the payloads and install the profile.
 5. If iOS requires explicit trust for the project test root, open **Settings → General → About → Certificate Trust Settings** and enable full trust only for the Shift-My test root you just installed.
 
-The generated profile is removable and its managed DoH rules are scoped only to `loc-a.<public-host>`, `loc-b.<public-host>`, and `device-loc.<public-host>`.
+The generated profile is removable and its managed DoH rules are scoped only to `loc-a.<public-host>`, `loc-b.<public-host>`, and `device-loc.<public-host>`. The dashboard/profile/API require Basic authentication; the DoH endpoint does not because the installed profile uses its independent high-entropy path token.
 
 ## Validate DoH
 
-1. Return to the dashboard.
+1. Return to the authenticated dashboard.
 2. Wait for the **DoH** card to change from `waiting` to `seen`.
 3. If it stays on `waiting`, confirm the profile is installed, the public hostname resolves to the VPS, and the server is reachable on TCP/443.
 
