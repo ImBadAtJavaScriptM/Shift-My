@@ -10,5 +10,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22.x'
+      - run: go mod tidy
+      - run: cat go.mod
+      - run: cat go.sum
       - run: go test ./...
       - run: go vet ./...
