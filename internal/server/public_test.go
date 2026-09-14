@@ -14,7 +14,9 @@ func TestPublicHandlerRequiresDashboardAuthentication(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnauthorized { t.Fatalf("status=%d", rr.Code) }
-	if rr.Header().Get("WWW-Authenticate") == "" { t.Fatal("expected Basic auth challenge") }
+	if got := rr.Header().Get("WWW-Authenticate"); got != `Basic realm="Shift-My Lab", charset="UTF-8"` {
+		t.Fatalf("WWW-Authenticate=%q", got)
+	}
 }
 
 func TestPublicHandlerAcceptsAuthenticatedDashboardRequest(t *testing.T) {
