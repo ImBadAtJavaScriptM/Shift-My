@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shift-My Test Lab</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <p class="eyebrow">CONTROLLED LOCATION LAB</p>
+      <h1>Shift-My Test</h1>
+      <p class="subtle">A stock-iPhone configuration-profile and networking experiment using only endpoints we control.</p>
+    </header>
+
+    <section class="grid status-grid" aria-label="experiment status">
+      <article class="card"><span>Profile</span><strong id="profile-status">generated</strong></article>
+      <article class="card"><span>DoH</span><strong id="doh-status">waiting</strong></article>
+      <article class="card"><span>Lab TLS</span><strong id="proxy-status">waiting</strong></article>
+      <article class="card"><span>Revision</span><strong id="revision">0</strong></article>
+    </section>
+
+    <section class="card target-card">
+      <h2>1. Install the test profile</h2>
+      <p class="subtle">The profile contains the project test root and managed DoH rules for only the three lab subdomains.</p>
+      <a class="button-link" href="/profile.mobileconfig">Download iPhone profile</a>
+    </section>
+
+    <section class="card target-card">
+      <h2>2. Choose the lab target</h2>
+      <form id="location-form">
+        <label>Label<input id="label" name="label" placeholder="Times Square"></label>
+        <div class="coords">
+          <label>Latitude<input id="latitude" name="latitude" inputmode="decimal" type="number" min="-90" max="90" step="any" required></label>
+          <label>Longitude<input id="longitude" name="longitude" inputmode="decimal" type="number" min="-180" max="180" step="any" required></label>
+        </div>
+        <button type="submit">Set target</button>
+        <p id="save-message" class="subtle" role="status"></p>
+      </form>
+    </section>
+
+    <section class="card next-card">
+      <h2>3. Validate the controlled path</h2>
+      <ol>
+        <li>Confirm the DoH card changes to <strong>seen</strong>.</li>
+        <li>Open <a id="lab-url" href="#">the controlled lab location endpoint</a> on the iPhone.</li>
+        <li>Confirm the returned latitude, longitude, label, and revision match the target above, then confirm Lab TLS changes to <strong>seen</strong>.</li>
+      </ol>
+      <p class="warning">This lab does not intercept, modify, or claim to override Apple Maps, Find My, Core Location, or third-party production location services.</p>
+    </section>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

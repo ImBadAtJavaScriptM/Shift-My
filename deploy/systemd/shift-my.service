@@ -1,0 +1,23 @@
+[Unit]
+Description=Shift-My controlled iPhone location lab
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shiftmy
+Group=shiftmy
+EnvironmentFile=/etc/shift-my/shift-my.env
+ExecStart=/opt/shift-my/shift-my-server
+WorkingDirectory=/var/lib/shift-my
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/shift-my
+ReadOnlyPaths=/etc/shift-my
+
+[Install]
+WantedBy=multi-user.target
