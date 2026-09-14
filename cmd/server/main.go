@@ -74,7 +74,7 @@ func run() error {
 	}
 	dashboardHandler := dashboard.New(store, location.New(store), dashboard.WithProfileConfig(profileCfg))
 	dohHandler := doh.New(store, cfg.PublicIPv4, policy)
-	publicHandler := publicserver.NewPublic(cfg.PublicHost, dashboardHandler, dohHandler)
+	publicHandler := publicserver.NewPublic(cfg.PublicHost, cfg.AdminPassword, dashboardHandler, dohHandler)
 	labHandler := proxy.NewWithRecorder(authority, store, policy, recorder)
 
 	publicCert, err := tls.LoadX509KeyPair(cfg.PublicCertPath, cfg.PublicKeyPath)
