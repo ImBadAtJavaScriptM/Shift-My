@@ -12,3 +12,10 @@ jobs:
           go-version: '1.22.x'
       - run: go test ./...
       - run: go vet ./...
+      - run: bash -n deploy/scripts/bootstrap.sh
+      - name: Reject production Apple location routes
+        run: |
+          if grep -R -nE 'gs-loc\.apple\.com|gs-loc-cn\.apple\.com|iphone-services\.apple\.com' cmd internal deploy web; then
+            echo 'production Apple location hostname found in active implementation'
+            exit 1
+          fi
