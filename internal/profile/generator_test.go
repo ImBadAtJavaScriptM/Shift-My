@@ -10,7 +10,7 @@ import (
 	"howett.net/plist"
 )
 
-func TestGenerateBuildsRemovableControlledDomainProfile(t *testing.T) {
+func TestGenerateBuildsRemovableControlledDomainProfileWithIPv6(t *testing.T) {
 	certPEM, _, err := pki.GenerateRoot("Shift-My Test Root")
 	if err != nil { t.Fatal(err) }
 	block, _ := pem.Decode(certPEM)
@@ -26,7 +26,7 @@ func TestGenerateBuildsRemovableControlledDomainProfile(t *testing.T) {
 	data, err := Generate(Config{
 		DisplayName:  "Shift-My Test",
 		PublicHost:   "lab.example.test",
-		PublicIPv4:   net.ParseIP("203.0.113.10"),
+		PublicIP:     net.ParseIP("2001:db8::10"),
 		Token:        "token-1",
 		RootCertDER:  cert.Raw,
 		MatchDomains: matchDomains,
@@ -60,15 +60,28 @@ func TestGenerateBuildsRemovableControlledDomainProfile(t *testing.T) {
 	if failover, ok := dnsSettings["AllowFailover"].(bool); !ok || failover {
 		t.Fatalf("AllowFailover=%v", dnsSettings["AllowFailover"])
 	}
-	assertStringArray(t, dnsSettings["ServerAddresses"], []string{"203.0.113.10"})
+	assertStringArray(t, dnsSettings["ServerAddresses"], []string{"2001:db8::10"})
 	assertStringArray(t, dnsSettings["SupplementalMatchDomains"], matchDomains)
+}
+
+func TestGenerateStillAcceptsIPv4(t *testing.T) {
+	data, err := Generate(Config{
+		DisplayName:  "Shift-My Test",
+		PublicHost:   "lab.example.test",
+		PublicIP:     net.ParseIP("203.0.113.10"),
+		Token:        "token-1",
+		RootCertDER:  []byte{1},
+		MatchDomains: []string{"loc-a.lab.example.test"},
+	})
+	if err != nil { t.Fatal(err) }
+	if len(data) == 0 { t.Fatal("expected profile bytes") }
 }
 
 func TestGenerateRejectsProductionAppleDomain(t *testing.T) {
 	_, err := Generate(Config{
 		DisplayName:  "Shift-My Test",
 		PublicHost:   "apple.com",
-		PublicIPv4:   net.ParseIP("203.0.113.10"),
+		PublicIP:     net.ParseIP("2001:db8::10"),
 		Token:        "token-1",
 		RootCertDER:  []byte{1},
 		MatchDomains: []string{"gs-loc.apple.com"},
