@@ -68,12 +68,12 @@ func run() error {
 	profileCfg := profile.Config{
 		DisplayName:  "Shift-My Test",
 		PublicHost:   cfg.PublicHost,
-		PublicIPv4:   cfg.PublicIPv4,
+		PublicIPv4:   cfg.PublicIP,
 		RootCertDER:  authority.RootDER(),
 		MatchDomains: policy.Hosts(),
 	}
 	dashboardHandler := dashboard.New(store, location.New(store), dashboard.WithProfileConfig(profileCfg))
-	dohHandler := doh.New(store, cfg.PublicIPv4, policy)
+	dohHandler := doh.New(store, cfg.PublicIP, policy)
 	publicHandler := publicserver.NewPublic(cfg.PublicHost, cfg.AdminPassword, dashboardHandler, dohHandler)
 	labHandler := proxy.NewWithRecorder(authority, store, policy, recorder)
 
