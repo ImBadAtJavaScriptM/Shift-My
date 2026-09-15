@@ -9,7 +9,7 @@ import (
 
 type Config struct {
 	PublicHost     string
-	PublicIPv4     net.IP
+	PublicIP       net.IP
 	AdminPassword  string
 	DBPath         string
 	CACertPath     string
@@ -22,10 +22,10 @@ type Config struct {
 
 func Load() (Config, error) {
 	host := os.Getenv("SHIFT_MY_PUBLIC_HOST")
-	ip := net.ParseIP(os.Getenv("SHIFT_MY_PUBLIC_IPV4"))
+	ip := net.ParseIP(os.Getenv("SHIFT_MY_PUBLIC_IP"))
 	adminPassword := os.Getenv("SHIFT_MY_ADMIN_PASSWORD")
-	if host == "" || ip == nil || ip.To4() == nil || adminPassword == "" {
-		return Config{}, fmt.Errorf("SHIFT_MY_PUBLIC_HOST, valid SHIFT_MY_PUBLIC_IPV4, and SHIFT_MY_ADMIN_PASSWORD are required")
+	if host == "" || ip == nil || adminPassword == "" {
+		return Config{}, fmt.Errorf("SHIFT_MY_PUBLIC_HOST, valid SHIFT_MY_PUBLIC_IP, and SHIFT_MY_ADMIN_PASSWORD are required")
 	}
 	capture, err := strconv.ParseBool(envDefault("SHIFT_MY_CAPTURE_ENABLED", "false"))
 	if err != nil {
@@ -33,7 +33,7 @@ func Load() (Config, error) {
 	}
 	return Config{
 		PublicHost:     host,
-		PublicIPv4:     ip.To4(),
+		PublicIP:       append(net.IP(nil), ip...),
 		AdminPassword:  adminPassword,
 		DBPath:         envDefault("SHIFT_MY_DB_PATH", "./shift-my.db"),
 		CACertPath:     envDefault("SHIFT_MY_CA_CERT", "./certs/root-ca.pem"),

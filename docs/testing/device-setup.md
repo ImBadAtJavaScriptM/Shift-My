@@ -4,10 +4,11 @@ These steps validate the Shift-My v1 profile → DoH → controlled TLS path on 
 
 ## Before the phone
 
-1. Deploy the server on a VPS using a hostname you own.
-2. Save the dashboard credentials printed by the bootstrap script. The username is `shiftmy`; the password is randomly generated and stored in `/etc/shift-my/shift-my.env` on the VPS.
-3. Confirm `https://<public-host>/` loads in Safari or another browser and authenticate when prompted.
-4. In the dashboard, enter a clearly recognizable test coordinate and press **Set target**.
+1. Deploy the server on a VPS or Compute Engine VM using a hostname you control.
+2. If the public deployment uses only IPv6, confirm the iPhone's current Wi-Fi or cellular network has IPv6 connectivity by loading the dashboard in Safari first.
+3. Save the dashboard credentials printed by the bootstrap script. The username is `shiftmy`; the password is randomly generated and stored in `/etc/shift-my/shift-my.env` on the server.
+4. Confirm `https://<public-host>/` loads in Safari or another browser and authenticate when prompted.
+5. In the dashboard, enter a clearly recognizable test coordinate and press **Set target**.
 
 ## Install the profile
 
@@ -23,7 +24,7 @@ The generated profile is removable and its managed DoH rules are scoped only to 
 
 1. Return to the authenticated dashboard.
 2. Wait for the **DoH** card to change from `waiting` to `seen`.
-3. If it stays on `waiting`, confirm the profile is installed, the public hostname resolves to the VPS, and the server is reachable on TCP/443.
+3. If it stays on `waiting`, confirm the profile is installed, the public hostname resolves to the server's configured address family, and TCP/443 is reachable from the iPhone's current network.
 
 ## Validate controlled TLS
 

@@ -19,13 +19,13 @@ import (
 const maxDNSMessage = 4096
 
 type handler struct {
-	store      *storage.Store
-	publicIPv4 net.IP
-	policy     netpolicy.Policy
+	store    *storage.Store
+	publicIP net.IP
+	policy   netpolicy.Policy
 }
 
-func New(store *storage.Store, publicIPv4 net.IP, policy netpolicy.Policy) http.Handler {
-	return &handler{store: store, publicIPv4: append(net.IP(nil), publicIPv4.To4()...), policy: policy}
+func New(store *storage.Store, publicIP net.IP, policy netpolicy.Policy) http.Handler {
+	return &handler{store: store, publicIP: append(net.IP(nil), publicIP...), policy: policy}
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -73,18 +73,22 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch q.Qtype {
 	case dns.TypeA:
 		allowedType = true
-		if h.publicIPv4 == nil {
-			http.Error(w, "server IPv4 unavailable", http.StatusInternalServerError)
-			return
+		if ip := h.publicIP.To4(); ip != nil {
+			response.Answer = []dns.RR{&dns.A{
+				Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 30},
+				A:   append(net.IP(nil), ip...),
+			}}
 		}
-		response.Answer = []dns.RR{&dns.A{
-			Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 30},
-			A:   append(net.IP(nil), h.publicIPv4...),
-		}}
 	case dns.TypeAAAA:
 		allowedType = true
-		// Deliberately return NODATA for controlled lab names so the lab client
-		// cannot bypass the IPv4 experiment path through IPv6.
+		if h.publicIP.To4() == nil {
+			if ip := h.publicIP.To16(); ip != nil {
+				response.Answer = []dns.RR{&dns.AAAA{
+					Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 30},
+					AAAA: append(net.IP(nil), ip...),
+				}}
+			}
+		}
 	default:
 		response.SetRcode(query, dns.RcodeRefused)
 	}

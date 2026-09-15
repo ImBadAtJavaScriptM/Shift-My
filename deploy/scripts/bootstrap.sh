@@ -2,16 +2,16 @@
 set -euo pipefail
 
 if [[ ${EUID} -ne 0 ]]; then
-  echo "run as root: sudo $0 <public-host> <public-ipv4> <letsencrypt-email>" >&2
+  echo "run as root: sudo $0 <public-host> <public-ip> <letsencrypt-email>" >&2
   exit 1
 fi
 if [[ $# -ne 3 ]]; then
-  echo "usage: $0 <public-host> <public-ipv4> <letsencrypt-email>" >&2
+  echo "usage: $0 <public-host> <public-ip> <letsencrypt-email>" >&2
   exit 1
 fi
 
 PUBLIC_HOST="${1,,}"
-PUBLIC_IPV4="$2"
+PUBLIC_IP="$2"
 LE_EMAIL="$3"
 case "$PUBLIC_HOST" in
   apple.com|*.apple.com|icloud.com|*.icloud.com)
@@ -19,14 +19,22 @@ case "$PUBLIC_HOST" in
     exit 1
     ;;
 esac
-if ! [[ "$PUBLIC_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-  echo "invalid IPv4 address: $PUBLIC_IPV4" >&2
+if ! python3 - "$PUBLIC_IP" <<'PY'
+import ipaddress
+import sys
+try:
+    ipaddress.ip_address(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+PY
+then
+  echo "invalid IP address: $PUBLIC_IP" >&2
   exit 1
 fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates certbot git golang-go nginx libnginx-mod-stream
+apt-get install -y ca-certificates certbot git golang-go nginx libnginx-mod-stream python3
 
 if ! id -u shiftmy >/dev/null 2>&1; then
   useradd --system --home /var/lib/shift-my --shell /usr/sbin/nologin shiftmy
@@ -64,6 +72,8 @@ if [[ -z "$ADMIN_PASSWORD" ]]; then
 fi
 
 # The public dashboard/DoH endpoint needs a normal publicly trusted certificate.
+# On an IPv6-only VM, the public hostname must have a working AAAA record before
+# this command runs so the ACME HTTP-01 challenge can reach TCP/80 over IPv6.
 systemctl stop nginx || true
 certbot certonly --standalone --non-interactive --agree-tos --email "$LE_EMAIL" -d "$PUBLIC_HOST"
 install -o root -g shiftmy -m 0640 "/etc/letsencrypt/live/$PUBLIC_HOST/privkey.pem" /etc/shift-my/public-key.pem
@@ -95,7 +105,7 @@ chmod 0755 /etc/letsencrypt/renewal-hooks/pre/shift-my-stop-nginx \
 
 cat >/etc/shift-my/shift-my.env <<EOF
 SHIFT_MY_PUBLIC_HOST=$PUBLIC_HOST
-SHIFT_MY_PUBLIC_IPV4=$PUBLIC_IPV4
+SHIFT_MY_PUBLIC_IP=$PUBLIC_IP
 SHIFT_MY_ADMIN_PASSWORD=$ADMIN_PASSWORD
 SHIFT_MY_DB_PATH=/var/lib/shift-my/state.db
 SHIFT_MY_CA_CERT=/etc/shift-my/root-ca.pem
@@ -117,6 +127,7 @@ systemctl enable nginx.service
 systemctl restart nginx.service
 
 echo "Shift-My controlled lab installed for https://$PUBLIC_HOST"
+echo "Public IP: $PUBLIC_IP"
 echo "Dashboard username: shiftmy"
 echo "Dashboard password: $ADMIN_PASSWORD"
 echo "Save that password. It is stored in /etc/shift-my/shift-my.env and is preserved on reruns."

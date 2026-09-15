@@ -20,11 +20,11 @@ The profile's `SupplementalMatchDomains` contains exactly:
 - `loc-b.<public-host>`
 - `device-loc.<public-host>`
 
-For an authenticated profile token, DoH returns the configured server IPv4 for A queries to those names, returns NODATA for AAAA, and returns DNS REFUSED for names outside the allowlist. It never acts as a general recursive resolver.
+For an authenticated profile token, DoH answers only the address family configured by `SHIFT_MY_PUBLIC_IP`: an IPv4 deployment returns an A record and NODATA for AAAA, while an IPv6 deployment returns an AAAA record and NODATA for A. Names outside the allowlist return DNS REFUSED. The service never acts as a general recursive resolver.
 
 ## Controlled TLS service
 
-Nginx routes SNI for only the three lab names to the lab TLS listener. The Go service dynamically mints a short-lived single-SAN leaf certificate from the project test CA only when the requested SNI is in the controlled policy.
+Nginx listens on both IPv4 and IPv6 at the edge and routes SNI for only the three lab names to the lab TLS listener. The Go service dynamically mints a short-lived single-SAN leaf certificate from the project test CA only when the requested SNI is in the controlled policy.
 
 `GET https://device-loc.<public-host>/v1/location` (and the equivalent `loc-a`/`loc-b` host) returns:
 

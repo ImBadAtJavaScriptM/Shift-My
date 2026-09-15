@@ -9,7 +9,7 @@ Shift-My is a controlled stock-iPhone networking lab for testing configuration p
 - Runs a tokenized DoH endpoint that resolves only those three names to the configured lab server IP and refuses other DNS names.
 - Runs a controlled TLS endpoint at `/v1/location` that returns the selected coordinate and revision.
 - Supports optional diagnostic capture for the controlled lab endpoint only. Capture is off by default, redacts credential headers, and caps bodies at 2 MiB.
-- Includes a dedicated-VPS Nginx SNI router, systemd unit, automatic public-certificate renewal hooks, and bootstrap script.
+- Includes an Nginx SNI router with IPv4/IPv6 edge listeners, a systemd unit, automatic public-certificate renewal hooks, and bootstrap script.
 
 ## What v1 does not do
 
@@ -24,13 +24,15 @@ go test ./...
 go vet ./...
 ```
 
-## Dedicated VPS deployment
+## Deployment
 
-Point a hostname you own at the VPS, then from the repository run:
+Set a hostname to the VM's public IP, then run:
 
 ```bash
-sudo ./deploy/scripts/bootstrap.sh lab.example.com 203.0.113.10 you@example.com
+sudo ./deploy/scripts/bootstrap.sh lab.example.com 2001:db8::10 you@example.com
 ```
+
+`SHIFT_MY_PUBLIC_IP` accepts either IPv4 or IPv6. For a Google Cloud deployment that avoids a billed external IPv4, use an external IPv6 address and publish an AAAA record for the public hostname before running the bootstrap script. See [`docs/testing/google-cloud.md`](docs/testing/google-cloud.md).
 
 The script rejects Apple/iCloud production hostnames, obtains a normal public certificate for the dashboard/DoH hostname, generates the private lab CA server-side, creates a long random dashboard password, and configures exact-SNI routing only for the public hostname and the three derived lab subdomains. It prints the dashboard username (`shiftmy`) and generated password at the end; save the password securely.
 
