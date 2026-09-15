@@ -13,7 +13,7 @@ import (
 type Config struct {
 	DisplayName  string
 	PublicHost   string
-	PublicIPv4   net.IP
+	PublicIP     net.IP
 	Token        string
 	RootCertDER  []byte
 	MatchDomains []string
@@ -33,9 +33,9 @@ func Generate(cfg Config) ([]byte, error) {
 	if base == "" || strings.ContainsAny(base, "/: ") {
 		return nil, fmt.Errorf("valid public hostname is required")
 	}
-	ip := cfg.PublicIPv4.To4()
-	if ip == nil {
-		return nil, fmt.Errorf("valid public IPv4 is required")
+	ip := cfg.PublicIP
+	if ip == nil || ip.To16() == nil {
+		return nil, fmt.Errorf("valid public IP is required")
 	}
 	if cfg.Token == "" {
 		return nil, fmt.Errorf("profile token is required")
