@@ -13,6 +13,16 @@ jobs:
       - run: go test ./...
       - run: go vet ./...
       - run: bash -n deploy/scripts/bootstrap.sh
+      - name: Validate IPv6 deployment support
+        run: |
+          grep -q 'SHIFT_MY_PUBLIC_IP=' .env.example
+          grep -q 'SHIFT_MY_PUBLIC_IP=' deploy/shift-my.env.example
+          grep -q 'listen \[::\]:443;' deploy/nginx/nginx.conf
+          grep -q 'listen \[::\]:80' deploy/nginx/nginx.conf
+          if grep -R -n 'SHIFT_MY_PUBLIC_IPV4' deploy .env.example README.md docs/testing; then
+            echo 'legacy IPv4-only configuration remains in deployable paths'
+            exit 1
+          fi
       - name: Reject production Apple location routes
         run: |
           if find cmd internal deploy web -type f ! -name '*_test.go' -print0 \
