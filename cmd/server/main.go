@@ -68,7 +68,7 @@ func run() error {
 	profileCfg := profile.Config{
 		DisplayName:  "Shift-My Test",
 		PublicHost:   cfg.PublicHost,
-		PublicIPv4:   cfg.PublicIP,
+		PublicIP:     cfg.PublicIP,
 		RootCertDER:  authority.RootDER(),
 		MatchDomains: policy.Hosts(),
 	}
