@@ -474,3 +474,44 @@ func TestFinalizeRejectsCSRForDifferentKeyThanAttestation(t *testing.T) {
 		t.Fatalf("mismatched CSR changed order: %+v", got)
 	}
 }
+
+
+func TestACMENewOrderRetryReturnsExistingActiveOrder(t *testing.T) {
+	store, err := storage.Open(t.TempDir() + "/state.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.EnsureInstallation("token"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EnsureEnrollmentCredentials("doh", "stage2", "client"); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := New("lab.example.test", store, testAuthority(t, "Identity CA"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := srv.Handler()
+	key := mustECDSAKey(t)
+	nonce := getNonce(t, h)
+	rr := signedPOST(t, h, "/acme/device/new-account", nonce, []byte(`{}`), key, true)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("account status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	nonce = rr.Header().Get("Replay-Nonce")
+	payload := []byte(`{"identifiers":[{"type":"permanent-identifier","value":"client"}]}`)
+	first := signedPOST(t, h, "/acme/device/new-order", nonce, payload, key, false)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first order status=%d body=%s", first.Code, first.Body.String())
+	}
+	firstLocation := first.Header().Get("Location")
+	nonce = first.Header().Get("Replay-Nonce")
+	second := signedPOST(t, h, "/acme/device/new-order", nonce, payload, key, false)
+	if second.Code != http.StatusOK {
+		t.Fatalf("retry status=%d body=%s", second.Code, second.Body.String())
+	}
+	if got := second.Header().Get("Location"); got != firstLocation {
+		t.Fatalf("retry location=%q want=%q", got, firstLocation)
+	}
+}
