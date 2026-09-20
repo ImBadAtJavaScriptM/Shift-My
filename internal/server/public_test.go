@@ -8,7 +8,7 @@ import (
 
 func TestPublicHandlerRequiresDashboardAuthentication(t *testing.T) {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	h := NewPublic("lab.example.test", "secret-password", ok, ok)
+	h := NewPublic("lab.example.test", "secret-password", ok, ok, ok)
 	req := httptest.NewRequest(http.MethodGet, "https://lab.example.test/", nil)
 	req.Host = "lab.example.test"
 	rr := httptest.NewRecorder()
@@ -21,7 +21,7 @@ func TestPublicHandlerRequiresDashboardAuthentication(t *testing.T) {
 
 func TestPublicHandlerAcceptsAuthenticatedDashboardRequest(t *testing.T) {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	h := NewPublic("lab.example.test", "secret-password", ok, ok)
+	h := NewPublic("lab.example.test", "secret-password", ok, ok, ok)
 	req := httptest.NewRequest(http.MethodGet, "https://lab.example.test/", nil)
 	req.Host = "lab.example.test"
 	req.SetBasicAuth("shiftmy", "secret-password")
@@ -33,7 +33,7 @@ func TestPublicHandlerAcceptsAuthenticatedDashboardRequest(t *testing.T) {
 func TestPublicHandlerAllowsTokenizedDoHWithoutDashboardAuthentication(t *testing.T) {
 	dashboard := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Fatal("dashboard handler called for DoH") })
 	dohHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	h := NewPublic("lab.example.test", "secret-password", dashboard, dohHandler)
+	h := NewPublic("lab.example.test", "secret-password", dashboard, dohHandler, dashboard)
 	req := httptest.NewRequest(http.MethodPost, "https://lab.example.test/dns-query/token-1", nil)
 	req.Host = "lab.example.test"
 	rr := httptest.NewRecorder()
@@ -43,7 +43,7 @@ func TestPublicHandlerAllowsTokenizedDoHWithoutDashboardAuthentication(t *testin
 
 func TestPublicHandlerRejectsWrongDashboardPassword(t *testing.T) {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	h := NewPublic("lab.example.test", "secret-password", ok, ok)
+	h := NewPublic("lab.example.test", "secret-password", ok, ok, ok)
 	req := httptest.NewRequest(http.MethodGet, "https://lab.example.test/api/status", nil)
 	req.Host = "lab.example.test"
 	req.SetBasicAuth("shiftmy", "wrong")
@@ -54,7 +54,7 @@ func TestPublicHandlerRejectsWrongDashboardPassword(t *testing.T) {
 
 func TestPublicHandlerRejectsUnexpectedHost(t *testing.T) {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	h := NewPublic("lab.example.test", "secret-password", ok, ok)
+	h := NewPublic("lab.example.test", "secret-password", ok, ok, ok)
 	req := httptest.NewRequest(http.MethodGet, "https://evil.example/", nil)
 	req.Host = "evil.example"
 	req.SetBasicAuth("shiftmy", "secret-password")
@@ -65,7 +65,7 @@ func TestPublicHandlerRejectsUnexpectedHost(t *testing.T) {
 
 func TestPublicHandlerAcceptsConfiguredHostWithPort(t *testing.T) {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	h := NewPublic("lab.example.test", "secret-password", ok, ok)
+	h := NewPublic("lab.example.test", "secret-password", ok, ok, ok)
 	req := httptest.NewRequest(http.MethodGet, "https://lab.example.test:443/", nil)
 	req.Host = "lab.example.test:443"
 	req.SetBasicAuth("shiftmy", "secret-password")
@@ -85,8 +85,29 @@ func TestPublicHandlerAllowsStage2ProfileWithoutDashboardAuthentication(t *testi
 	dohHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("DoH handler called for stage 2")
 	})
-	h := NewPublic("lab.example.test", "secret-password", dashboard, dohHandler)
+	h := NewPublic("lab.example.test", "secret-password", dashboard, dohHandler, dashboard)
 	req := httptest.NewRequest(http.MethodGet, "https://lab.example.test/api/profile/standard.mobileconfig?p=token", nil)
+	req.Host = "lab.example.test"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status=%d", rr.Code)
+	}
+}
+
+
+func TestPublicHandlerAllowsACMEWithoutDashboardAuthentication(t *testing.T) {
+	dashboard := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("dashboard handler called for ACME")
+	})
+	dohHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("DoH handler called for ACME")
+	})
+	acmeHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	h := NewPublic("lab.example.test", "secret-password", dashboard, dohHandler, acmeHandler)
+	req := httptest.NewRequest(http.MethodGet, "https://lab.example.test/acme/device/directory", nil)
 	req.Host = "lab.example.test"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
