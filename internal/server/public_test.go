@@ -73,3 +73,24 @@ func TestPublicHandlerAcceptsConfiguredHostWithPort(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusNoContent { t.Fatalf("status=%d", rr.Code) }
 }
+
+
+func TestPublicHandlerAllowsStage2ProfileWithoutDashboardAuthentication(t *testing.T) {
+	dashboard := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/profile/standard.mobileconfig" {
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	dohHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("DoH handler called for stage 2")
+	})
+	h := NewPublic("lab.example.test", "secret-password", dashboard, dohHandler)
+	req := httptest.NewRequest(http.MethodGet, "https://lab.example.test/api/profile/standard.mobileconfig?p=token", nil)
+	req.Host = "lab.example.test"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status=%d", rr.Code)
+	}
+}
