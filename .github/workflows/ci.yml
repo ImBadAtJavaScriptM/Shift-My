@@ -13,6 +13,7 @@ jobs:
       - run: go test ./...
       - run: go vet ./...
       - run: bash -n deploy/scripts/bootstrap.sh
+      - run: bash -n deploy/scripts/update-existing.sh
       - name: Validate IPv6 deployment support
         run: |
           grep -q 'SHIFT_MY_PUBLIC_IP=' .env.example
