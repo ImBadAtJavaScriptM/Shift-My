@@ -31,3 +31,14 @@ jobs:
             echo 'production Apple location hostname found in active implementation'
             exit 1
           fi
+      - name: Validate attested two-stage profile guards
+        run: |
+          grep -q '"HardwareBound": *true' internal/profile/generator.go
+          grep -q '"Attest": *true' internal/profile/generator.go
+          grep -q '"KeyIsExtractable": *false' internal/profile/generator.go
+          grep -q 'GenerateStage2' internal/profile/generator.go
+          grep -q 'ExtKeyUsageClientAuth' internal/pki/client.go
+          if grep -q 'ExtKeyUsageServerAuth' internal/pki/client.go; then
+            echo 'identity certificate issuer must not grant server-auth'
+            exit 1
+          fi
