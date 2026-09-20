@@ -59,9 +59,15 @@ go build -C "$SRC" -trimpath -o /opt/shift-my/shift-my-ca-bootstrap ./cmd/ca-boo
 if [[ ! -f /etc/shift-my/root-ca-key.pem ]]; then
   /opt/shift-my/shift-my-ca-bootstrap -out /etc/shift-my
 fi
-chown root:shiftmy /etc/shift-my/root-ca-key.pem
-chmod 0640 /etc/shift-my/root-ca-key.pem
-chmod 0644 /etc/shift-my/root-ca.pem
+if [[ ! -f /etc/shift-my/identity-ca-key.pem ]]; then
+  /opt/shift-my/shift-my-ca-bootstrap \
+    -out /etc/shift-my \
+    -prefix identity-ca \
+    -common-name "Shift-My Test Identity CA"
+fi
+chown root:shiftmy /etc/shift-my/root-ca-key.pem /etc/shift-my/identity-ca-key.pem
+chmod 0640 /etc/shift-my/root-ca-key.pem /etc/shift-my/identity-ca-key.pem
+chmod 0644 /etc/shift-my/root-ca.pem /etc/shift-my/identity-ca.pem
 
 ADMIN_PASSWORD=""
 if [[ -f /etc/shift-my/shift-my.env ]]; then
@@ -110,6 +116,8 @@ SHIFT_MY_ADMIN_PASSWORD=$ADMIN_PASSWORD
 SHIFT_MY_DB_PATH=/var/lib/shift-my/state.db
 SHIFT_MY_CA_CERT=/etc/shift-my/root-ca.pem
 SHIFT_MY_CA_KEY=/etc/shift-my/root-ca-key.pem
+SHIFT_MY_IDENTITY_CA_CERT=/etc/shift-my/identity-ca.pem
+SHIFT_MY_IDENTITY_CA_KEY=/etc/shift-my/identity-ca-key.pem
 SHIFT_MY_PUBLIC_CERT=/etc/shift-my/public.pem
 SHIFT_MY_PUBLIC_KEY=/etc/shift-my/public-key.pem
 SHIFT_MY_CAPTURE_ENABLED=false
