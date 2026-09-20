@@ -45,9 +45,15 @@ PY
   echo "Created pre-upgrade database backup: $BACKUP"
 fi
 
-# Refresh the checkout only after the backup exists.
-git -C "$SRC" fetch --depth 1 origin main
-git -C "$SRC" checkout --force FETCH_HEAD
+# Refresh the checkout only after the backup exists. IPv6-only VMs may not
+# have a route to github.com; in that case Cloud Shell can stage the current
+# source tree (including vendored modules) and set SHIFT_MY_SKIP_FETCH=1.
+if [[ "${SHIFT_MY_SKIP_FETCH:-0}" == "1" ]]; then
+  echo "Using source already staged at $SRC; skipping VM GitHub fetch."
+else
+  git -C "$SRC" fetch --depth 1 origin main
+  git -C "$SRC" checkout --force FETCH_HEAD
+fi
 
 # Keep the currently running binary available for an immediate service rollback.
 if [[ -x "$SERVER_BIN" ]]; then
