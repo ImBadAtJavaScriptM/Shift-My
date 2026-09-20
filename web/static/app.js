@@ -48,3 +48,25 @@ refreshStatus().catch((error) => {
   $('save-message').textContent = `Could not load status: ${String(error.message || error)}`;
 });
 setInterval(() => refreshStatus().catch(() => {}), 5000);
+
+
+$('reset-enrollment').addEventListener('click', async () => {
+  const message = $('reset-message');
+  const confirmed = window.confirm(
+    'Reset this iPhone enrollment? This rotates profile/ACME credentials. Your saved target coordinates will stay unchanged.'
+  );
+  if (!confirmed) return;
+  message.textContent = 'Resetting enrollment…';
+  try {
+    const response = await fetch('/api/enrollment/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: 'RESET' }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    renderStatus(await response.json());
+    message.textContent = 'Enrollment reset. Remove the old iPhone profile, then download and install the new Stage 1 profile.';
+  } catch (error) {
+    message.textContent = `Could not reset enrollment: ${String(error.message || error)}`;
+  }
+});
