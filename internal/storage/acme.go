@@ -216,6 +216,25 @@ FROM acme_order WHERE id = ?`,
 	return o, nil
 }
 
+
+func (s *Store) ACMEOrderByClientIdentifier(clientIdentifier string) (ACMEOrder, error) {
+	if clientIdentifier == "" {
+		return ACMEOrder{}, ErrACMENotFound
+	}
+	var id string
+	err := s.db.QueryRow(
+		`SELECT id FROM acme_order WHERE client_identifier = ?`,
+		clientIdentifier,
+	).Scan(&id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ACMEOrder{}, ErrACMENotFound
+		}
+		return ACMEOrder{}, fmt.Errorf("read ACME order by client identifier: %w", err)
+	}
+	return s.ACMEOrder(id)
+}
+
 func (s *Store) MarkACMEChallengeValid(orderID, attestedSPKIHash string) error {
 	if attestedSPKIHash == "" {
 		return errors.New("attested public key hash is required")
