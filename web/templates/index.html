@@ -27,6 +27,10 @@
       <h2>1. Install the test profile</h2>
       <p class="subtle">Stage 1 contains the declarative bootstrap, a hardware-bound attested device identity request, and managed DoH rules for only the three lab subdomains. iOS then retrieves Stage 2, which installs the project test root.</p>
       <a class="button-link" href="/profile.mobileconfig">Download iPhone profile</a>
+      <div class="reset-row">
+        <button id="reset-enrollment" class="secondary-button" type="button">Reset enrollment</button>
+        <p id="reset-message" class="subtle" role="status"></p>
+      </div>
     </section>
 
     <section class="card target-card">
