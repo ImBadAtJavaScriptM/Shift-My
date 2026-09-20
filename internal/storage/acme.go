@@ -268,6 +268,51 @@ WHERE id = ? AND status = 'ready' AND challenge_status = 'valid'`,
 	return nil
 }
 
+
+
+func (s *Store) ResetEnrollment(profileToken, stage2Token, clientIdentifier string) (Installation, error) {
+	if profileToken == "" || stage2Token == "" || clientIdentifier == "" {
+		return Installation{}, errors.New("all replacement enrollment credentials are required")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Installation{}, fmt.Errorf("begin enrollment reset: %w", err)
+	}
+	defer tx.Rollback()
+
+	result, err := tx.Exec(`
+UPDATE installation
+SET profile_token = ?,
+    stage2_token = ?,
+    client_identifier = ?,
+    doh_seen_at = NULL,
+    proxy_seen_at = NULL,
+    stage2_delivered_at = NULL,
+    stage2_delivery_count = 0,
+    identity_enrolled_at = NULL,
+    identity_cert_fingerprint = ''
+WHERE id = 1`, profileToken, stage2Token, clientIdentifier)
+	if err != nil {
+		return Installation{}, fmt.Errorf("reset installation enrollment state: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return Installation{}, fmt.Errorf("reset installation rows affected: %w", err)
+	}
+	if rows != 1 {
+		return Installation{}, errors.New("installation is not initialized")
+	}
+	for _, table := range []string{"acme_nonce", "acme_order", "acme_account"} {
+		if _, err := tx.Exec("DELETE FROM " + table); err != nil {
+			return Installation{}, fmt.Errorf("clear %s during enrollment reset: %w", table, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Installation{}, fmt.Errorf("commit enrollment reset: %w", err)
+	}
+	return s.Installation()
+}
+
 func formatOptionalTime(t *time.Time) any {
 	if t == nil {
 		return nil
