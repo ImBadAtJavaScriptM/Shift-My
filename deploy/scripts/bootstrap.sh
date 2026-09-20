@@ -34,14 +34,24 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates certbot git golang-go nginx libnginx-mod-stream python3
+apt-get install -y ca-certificates certbot git golang-go nginx libnginx-mod-stream python3 sqlite3
 
 if ! id -u shiftmy >/dev/null 2>&1; then
   useradd --system --home /var/lib/shift-my --shell /usr/sbin/nologin shiftmy
 fi
 install -d -m 0755 /opt/shift-my
-install -d -o shiftmy -g shiftmy -m 0750 /var/lib/shift-my /var/lib/shift-my/captures
+install -d -o shiftmy -g shiftmy -m 0750 /var/lib/shift-my /var/lib/shift-my/captures /var/lib/shift-my/backups
 install -d -o root -g shiftmy -m 0750 /etc/shift-my
+
+# Take a transactionally consistent SQLite backup before a deployment can
+# start a newer binary and run additive schema migration.
+if [[ -f /var/lib/shift-my/state.db ]]; then
+  BACKUP="/var/lib/shift-my/backups/state-$(date -u +%Y%m%dT%H%M%SZ).db"
+  sqlite3 /var/lib/shift-my/state.db ".backup '$BACKUP'"
+  chown shiftmy:shiftmy "$BACKUP"
+  chmod 0640 "$BACKUP"
+  echo "Created pre-deploy database backup: $BACKUP"
+fi
 
 SRC=/opt/shift-my/src
 if [[ -d "$SRC/.git" ]]; then
