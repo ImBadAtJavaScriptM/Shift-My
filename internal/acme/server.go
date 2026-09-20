@@ -220,6 +220,23 @@ func (s *Server) newOrder(w http.ResponseWriter, _ *http.Request, req *signedReq
 		return
 	}
 
+	// iOS may retry new-order after losing a response. Reuse the active order
+	// for the same account and ClientIdentifier instead of forcing a reset.
+	if existing, err := s.store.ACMEOrderByClientIdentifier(id.Value); err == nil {
+		if existing.AccountID != account.ID {
+			s.fail(w, http.StatusUnauthorized, "unauthorized", "order belongs to another account")
+			return
+		}
+		if s.now().Before(existing.ExpiresAt) && (existing.Status == "pending" || existing.Status == "ready") {
+			w.Header().Set("Location", s.baseURL+"/order/"+existing.ID)
+			s.writeJSON(w, http.StatusOK, s.orderBody(existing))
+			return
+		}
+	} else if !errors.Is(err, storage.ErrACMENotFound) {
+		s.fail(w, http.StatusInternalServerError, "serverInternal", "could not recover existing order")
+		return
+	}
+
 	orderID, err := randomURLToken(16)
 	if err != nil {
 		s.fail(w, http.StatusInternalServerError, "serverInternal", "could not create order")
