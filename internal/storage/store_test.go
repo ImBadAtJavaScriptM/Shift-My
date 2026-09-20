@@ -182,3 +182,50 @@ func TestMarkSeenTimestampsPersist(t *testing.T) {
 		t.Fatalf("proxy=%v", got.ProxySeenAt)
 	}
 }
+
+
+func TestACMENonceIsSingleUseAndExpires(t *testing.T) {
+	s, err := Open(t.TempDir() + "/state.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.EnsureInstallation("token-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 9, 20, 17, 0, 0, 0, time.UTC)
+	nonce, err := s.IssueACMENonce(now, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nonce == "" {
+		t.Fatal("expected nonce")
+	}
+	ok, err := s.ConsumeACMENonce(nonce, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected first nonce use to succeed")
+	}
+	ok, err = s.ConsumeACMENonce(nonce, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("reused nonce must fail")
+	}
+
+	expired, err := s.IssueACMENonce(now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err = s.ConsumeACMENonce(expired, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expired nonce must fail")
+	}
+}
