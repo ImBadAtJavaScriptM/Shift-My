@@ -11,14 +11,19 @@ import (
 
 func main() {
 	out := flag.String("out", "./certs", "output directory")
+	prefix := flag.String("prefix", "root-ca", "output filename prefix")
+	commonName := flag.String("common-name", "Shift-My Test Root CA", "root certificate common name")
 	force := flag.Bool("force", false, "overwrite an existing CA key")
 	flag.Parse()
 
 	if err := os.MkdirAll(*out, 0o700); err != nil {
 		fatal(err)
 	}
-	certPath := filepath.Join(*out, "root-ca.pem")
-	keyPath := filepath.Join(*out, "root-ca-key.pem")
+	if *prefix == "" || filepath.Base(*prefix) != *prefix {
+		fatal(fmt.Errorf("prefix must be a simple filename"))
+	}
+	certPath := filepath.Join(*out, *prefix+".pem")
+	keyPath := filepath.Join(*out, *prefix+"-key.pem")
 	if !*force {
 		if _, err := os.Stat(keyPath); err == nil {
 			fatal(fmt.Errorf("refusing to overwrite existing CA key %s; use -force explicitly", keyPath))
@@ -27,7 +32,7 @@ func main() {
 		}
 	}
 
-	certPEM, keyPEM, err := pki.GenerateRoot("Shift-My Test Root CA")
+	certPEM, keyPEM, err := pki.GenerateRoot(*commonName)
 	if err != nil {
 		fatal(err)
 	}
