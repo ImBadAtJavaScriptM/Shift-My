@@ -408,3 +408,69 @@ func pathFromURL(raw string) string {
 	const origin = "https://lab.example.test"
 	return strings.TrimPrefix(raw, origin)
 }
+
+
+func TestFinalizeRejectsCSRForDifferentKeyThanAttestation(t *testing.T) {
+	store, err := storage.Open(t.TempDir() + "/state.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.EnsureInstallation("token"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EnsureEnrollmentCredentials("doh", "stage2", "client"); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := New("lab.example.test", store, testAuthority(t, "Identity CA"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := srv.Handler()
+	accountKey := mustECDSAKey(t)
+	nonce := getNonce(t, h)
+	rr := signedPOST(t, h, "/acme/device/new-account", nonce, []byte(`{}`), accountKey, true)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("account status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	attestedKey := mustECDSAKey(t)
+	attestedHash, err := spkiSHA256(&attestedKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	order := storage.ACMEOrder{
+		ID:                 "mismatch-order",
+		AccountID:          1,
+		ClientIdentifier:   "client",
+		Status:             "pending",
+		ChallengeToken:     "challenge",
+		ChallengeTokenHash: "hash",
+		ChallengeStatus:    "pending",
+		ExpiresAt:          now.Add(time.Hour),
+		CreatedAt:          now,
+	}
+	if err := store.CreateACMEOrder(order); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkACMEChallengeValid(order.ID, attestedHash); err != nil {
+		t.Fatal(err)
+	}
+
+	nonce = getNonce(t, h)
+	differentKey := mustECDSAKey(t)
+	csrDER := testCSR(t, differentKey)
+	payload, _ := json.Marshal(map[string]string{"csr": base64.RawURLEncoding.EncodeToString(csrDER)})
+	rr = signedPOST(t, h, "/acme/device/order/"+order.ID+"/finalize", nonce, payload, accountKey, false)
+	if rr.Code != http.StatusBadRequest || !bytes.Contains(rr.Body.Bytes(), []byte("badCSR")) {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	got, err := store.ACMEOrder(order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "ready" || len(got.CertificatePEM) != 0 {
+		t.Fatalf("mismatched CSR changed order: %+v", got)
+	}
+}
