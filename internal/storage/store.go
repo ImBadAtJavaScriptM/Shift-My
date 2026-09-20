@@ -1,7 +1,10 @@
 package storage
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -317,4 +320,81 @@ func parseOptionalTime(value sql.NullString) (*time.Time, error) {
 		return nil, err
 	}
 	return &t, nil
+}
+
+
+func (s *Store) IssueACMENonce(now time.Time, ttl time.Duration) (string, error) {
+	if ttl <= 0 {
+		return "", errors.New("nonce ttl must be positive")
+	}
+	raw := make([]byte, 24)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate acme nonce: %w", err)
+	}
+	nonce := base64.RawURLEncoding.EncodeToString(raw)
+	hash := sha256.Sum256([]byte(nonce))
+	_, err := s.db.Exec(
+		`INSERT INTO acme_nonce (nonce_hash, expires_at) VALUES (?, ?)`,
+		base64.RawURLEncoding.EncodeToString(hash[:]),
+		now.UTC().Add(ttl).Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return "", fmt.Errorf("store acme nonce: %w", err)
+	}
+	return nonce, nil
+}
+
+func (s *Store) ConsumeACMENonce(nonce string, now time.Time) (bool, error) {
+	if nonce == "" {
+		return false, nil
+	}
+	hash := sha256.Sum256([]byte(nonce))
+	key := base64.RawURLEncoding.EncodeToString(hash[:])
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, fmt.Errorf("begin nonce consume: %w", err)
+	}
+	defer tx.Rollback()
+
+	var expiresAt string
+	var consumedAt sql.NullString
+	err = tx.QueryRow(
+		`SELECT expires_at, consumed_at FROM acme_nonce WHERE nonce_hash = ?`,
+		key,
+	).Scan(&expiresAt, &consumedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read acme nonce: %w", err)
+	}
+	if consumedAt.Valid {
+		return false, nil
+	}
+	expires, err := time.Parse(time.RFC3339Nano, expiresAt)
+	if err != nil {
+		return false, fmt.Errorf("parse acme nonce expiry: %w", err)
+	}
+	if !now.UTC().Before(expires) {
+		return false, nil
+	}
+	result, err := tx.Exec(
+		`UPDATE acme_nonce SET consumed_at = ? WHERE nonce_hash = ? AND consumed_at IS NULL`,
+		now.UTC().Format(time.RFC3339Nano),
+		key,
+	)
+	if err != nil {
+		return false, fmt.Errorf("consume acme nonce: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("nonce rows affected: %w", err)
+	}
+	if rows != 1 {
+		return false, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit nonce consume: %w", err)
+	}
+	return true, nil
 }
