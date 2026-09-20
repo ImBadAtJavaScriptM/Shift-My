@@ -44,11 +44,22 @@ func run() error {
 	}
 	defer store.Close()
 
-	token, err := randomToken()
+	profileToken, err := randomToken()
 	if err != nil {
 		return err
 	}
-	if err := store.EnsureInstallation(token); err != nil {
+	if err := store.EnsureInstallation(profileToken); err != nil {
+		return err
+	}
+	stage2Token, err := randomToken()
+	if err != nil {
+		return err
+	}
+	clientIdentifier, err := randomToken()
+	if err != nil {
+		return err
+	}
+	if err := store.EnsureEnrollmentCredentials(profileToken, stage2Token, clientIdentifier); err != nil {
 		return err
 	}
 
