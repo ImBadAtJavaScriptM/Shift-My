@@ -1,8 +1,8 @@
 # Controlled-lab safety boundary
 
-Shift-My v1 is intentionally limited to infrastructure and hostnames owned by the operator.
+Shift-My is intentionally limited to infrastructure and hostnames owned by the operator.
 
-## Enforced boundary
+## Enforced hostname boundary
 
 The only TLS/DNS lab names are derived from the configured public hostname:
 
@@ -10,15 +10,48 @@ The only TLS/DNS lab names are derived from the configured public hostname:
 - `loc-b.<public-host>`
 - `device-loc.<public-host>`
 
-The hostname policy rejects `apple.com`, `*.apple.com`, `icloud.com`, and `*.icloud.com` as a base. The DoH handler refuses names outside the controlled allowlist instead of forwarding them. The lab TLS service refuses unknown SNI/Host values. Nginx has exact SNI routes for the public hostname and the three controlled lab names; all other SNI is sent to a dead backend.
+The hostname policy rejects `apple.com`, `*.apple.com`, `icloud.com`, and `*.icloud.com` as a base. The profile generator also requires every managed DNS match domain to be a subdomain of the configured project-owned public host.
+
+The DoH handler refuses names outside the controlled allowlist rather than forwarding them. The lab TLS service refuses unknown SNI/Host values. Nginx has exact SNI routes for the public hostname and the three controlled lab names; all other SNI is sent to a dead backend.
+
+CI includes a regression check that fails if known Apple production location-service hostnames appear in active implementation paths.
 
 ## Access control
 
-The dashboard, profile download, static UI, and control API require HTTP Basic authentication with username `shiftmy` and a long server-side admin password. The deployment script generates that password and stores it in the root-owned `/etc/shift-my/shift-my.env`. The DoH endpoint is exempt from dashboard authentication because it is separately protected by the high-entropy per-installation URL token embedded in the removable profile.
+The dashboard, Stage 1 profile download, static UI, location API, and enrollment-reset API require HTTP Basic authentication.
 
-## Certificates
+Automatic iOS services cannot answer the dashboard's Basic Auth challenge, so they use separate credentials:
 
-The dashboard/DoH hostname uses a normal publicly trusted certificate. The three lab hosts use short-lived leaf certificates signed by the project test root. The project CA private key remains server-side and is never embedded in the configuration profile. The deployment installs renewal hooks so the public certificate copy used by the unprivileged service is refreshed after successful Certbot renewal.
+- DoH uses a high-entropy per-installation path token.
+- Stage 2 uses a separate high-entropy query token.
+- ACME uses signed JWS requests, single-use replay nonces, the current installation ClientIdentifier, and managed-device attestation.
+
+The safe status API never returns those credentials.
+
+## Certificate separation
+
+The deployment uses two independent private CAs:
+
+- **Lab TLS CA:** signs only controlled lab server certificates. Its root certificate is delivered in Stage 2.
+- **Identity CA:** signs only short-lived client-auth device certificates after ACME attestation and CSR-key binding. Its root is not delivered as a trusted server root.
+
+Neither private key is embedded in an iPhone profile.
+
+The public dashboard/DoH/ACME hostname uses a normal publicly trusted certificate.
+
+## Apple managed-device attestation
+
+The ACME service trusts the Apple Enterprise Attestation Root CA only for validating an enrolling iPhone's managed-device attestation.
+
+That trust anchor is not used to generate certificates, route Apple traffic, or impersonate an Apple service.
+
+Before identity issuance, the server requires the attestation path and challenge freshness to validate. At finalization, the CSR key must match the public key represented by the accepted attestation.
+
+## Reset behavior
+
+**Reset enrollment** rotates the DoH credential, Stage 2 credential, and ClientIdentifier; removes ACME account/order/nonce state; and clears enrollment/traffic status markers.
+
+It deliberately preserves the selected latitude, longitude, label, and location revision.
 
 ## Capture
 
@@ -26,4 +59,4 @@ Diagnostic capture is off by default. When enabled, it applies only to the contr
 
 ## Non-goals
 
-This repository does not provide production Apple interception, Find My modification, Core Location bypasses, third-party traffic interception, or instructions for defeating certificate pinning, attestation, or platform protections.
+This repository does not provide production Apple interception, Apple service impersonation, Find My modification, Core Location bypasses, third-party traffic interception, or instructions for defeating certificate pinning, attestation, or platform trust protections.
