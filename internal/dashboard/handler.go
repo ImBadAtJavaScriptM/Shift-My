@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"html/template"
@@ -8,6 +9,7 @@ import (
 	"io/fs"
 	"mime"
 	"net/http"
+	"time"
 
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/location"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/profile"
@@ -34,6 +36,8 @@ type statusResponse struct {
 	DoHSeen          bool     `json:"doh_seen"`
 	ProxySeen        bool     `json:"proxy_seen"`
 	ProfileStatus    string   `json:"profile_status"`
+	Stage2Delivered bool     `json:"stage2_delivered"`
+	IdentityEnrolled bool    `json:"identity_enrolled"`
 }
 
 type locationRequest struct {
@@ -71,6 +75,7 @@ func New(store *storage.Store, loc *location.Service, options ...Option) http.Ha
 	mux.HandleFunc("/api/status", h.status)
 	mux.HandleFunc("/api/location", h.setLocation)
 	mux.HandleFunc("/profile.mobileconfig", h.mobileconfig)
+	mux.HandleFunc("/api/profile/standard.mobileconfig", h.stage2Mobileconfig)
 	mux.HandleFunc("/", h.index)
 	return mux
 }
@@ -156,7 +161,9 @@ func (h *handler) mobileconfig(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := *h.profileCfg
 	cfg.Token = inst.ProfileToken
-	data, err := profile.Generate(cfg)
+	cfg.Stage2Token = inst.Stage2Token
+	cfg.ClientIdentifier = inst.ClientIdentifier
+	data, err := profile.GenerateStage1(cfg)
 	if err != nil {
 		http.Error(w, "generate profile", http.StatusInternalServerError)
 		return
@@ -166,6 +173,51 @@ func (h *handler) mobileconfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+func (h *handler) stage2Mobileconfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.profileCfg == nil {
+		http.Error(w, "profile generation is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	inst, err := h.store.Installation()
+	if err != nil {
+		http.Error(w, "read installation", http.StatusInternalServerError)
+		return
+	}
+	provided := r.URL.Query().Get("p")
+	if provided == "" || !constantTimeTokenEqual(provided, inst.Stage2Token) {
+		http.Error(w, "invalid stage 2 token", http.StatusUnauthorized)
+		return
+	}
+	cfg := *h.profileCfg
+	cfg.Token = inst.ProfileToken
+	data, err := profile.GenerateStage2(cfg)
+	if err != nil {
+		http.Error(w, "generate stage 2 profile", http.StatusInternalServerError)
+		return
+	}
+	if err := h.store.MarkStage2Delivered(time.Now()); err != nil {
+		http.Error(w, "record stage 2 delivery", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-apple-aspen-config")
+	w.Header().Set("Content-Disposition", `attachment; filename="shift-my-test-standard.mobileconfig"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func constantTimeTokenEqual(got, want string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 func ensureSingleJSONValue(dec *json.Decoder) error {
@@ -193,6 +245,8 @@ func safeStatus(inst storage.Installation) statusResponse {
 		DoHSeen:          inst.DoHSeenAt != nil,
 		ProxySeen:        inst.ProxySeenAt != nil,
 		ProfileStatus:    profileStatus,
+		Stage2Delivered: inst.Stage2DeliveredAt != nil,
+		IdentityEnrolled: inst.IdentityEnrolledAt != nil,
 	}
 }
 
