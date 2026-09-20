@@ -2,6 +2,7 @@ package pki
 
 import (
 	"crypto/ecdsa"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -61,7 +62,7 @@ func (a *Authority) SignClientCSR(csrDER []byte, clientIdentifier string, validF
 		IsCA:         false,
 		BasicConstraintsValid: true,
 	}
-	der, err := x509.CreateCertificate(nilSafeRandReader{}, tmpl, a.cert, csr.PublicKey, a.key)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, a.cert, csr.PublicKey, a.key)
 	if err != nil {
 		return IssuedClientCertificate{}, fmt.Errorf("issue client certificate: %w", err)
 	}
@@ -81,11 +82,3 @@ func (a *Authority) SignClientCSR(csrDER []byte, clientIdentifier string, validF
 	}, nil
 }
 
-// nilSafeRandReader exists only to keep all certificate creation on
-// crypto/rand without exposing the signing key or accepting a caller-supplied
-// entropy source.
-type nilSafeRandReader struct{}
-
-func (nilSafeRandReader) Read(p []byte) (int, error) {
-	return rand.Read(p)
-}
