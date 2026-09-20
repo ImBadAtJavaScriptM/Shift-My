@@ -14,6 +14,8 @@ type Config struct {
 	DBPath         string
 	CACertPath     string
 	CAKeyPath      string
+	IdentityCACertPath string
+	IdentityCAKeyPath  string
 	PublicCertPath string
 	PublicKeyPath  string
 	CaptureEnabled bool
@@ -38,6 +40,8 @@ func Load() (Config, error) {
 		DBPath:         envDefault("SHIFT_MY_DB_PATH", "./shift-my.db"),
 		CACertPath:     envDefault("SHIFT_MY_CA_CERT", "./certs/root-ca.pem"),
 		CAKeyPath:      envDefault("SHIFT_MY_CA_KEY", "./certs/root-ca-key.pem"),
+		IdentityCACertPath: envDefault("SHIFT_MY_IDENTITY_CA_CERT", "./certs/identity-ca.pem"),
+		IdentityCAKeyPath:  envDefault("SHIFT_MY_IDENTITY_CA_KEY", "./certs/identity-ca-key.pem"),
 		PublicCertPath: envDefault("SHIFT_MY_PUBLIC_CERT", "./certs/public.pem"),
 		PublicKeyPath:  envDefault("SHIFT_MY_PUBLIC_KEY", "./certs/public-key.pem"),
 		CaptureEnabled: capture,

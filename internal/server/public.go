@@ -11,7 +11,7 @@ import (
 // DoH endpoint and rejects requests whose Host header is not the configured
 // public hostname. DoH remains exempt from Basic auth because its path token is
 // the resolver credential used by the installed profile.
-func NewPublic(publicHost, adminPassword string, dashboardHandler, dohHandler http.Handler) http.Handler {
+func NewPublic(publicHost, adminPassword string, dashboardHandler, dohHandler, acmeHandler http.Handler) http.Handler {
 	publicHost = normalizeHost(publicHost)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if normalizeHost(r.Host) != publicHost {
@@ -20,6 +20,24 @@ func NewPublic(publicHost, adminPassword string, dashboardHandler, dohHandler ht
 		}
 		if strings.HasPrefix(r.URL.Path, "/dns-query/") {
 			dohHandler.ServeHTTP(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/acme/device/") {
+			if acmeHandler == nil {
+				http.NotFound(w, r)
+				return
+			}
+			acmeHandler.ServeHTTP(w, r)
+			return
+		}
+		if r.URL.Path == "/api/profile/standard.mobileconfig" {
+			// iOS retrieves Stage 2 automatically and cannot answer dashboard
+			// Basic Auth. The dashboard handler validates its dedicated token.
+			dashboardHandler.ServeHTTP(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/acme/device/") {
+			acmeHandler.ServeHTTP(w, r)
 			return
 		}
 		username, password, ok := r.BasicAuth()

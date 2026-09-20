@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	acmeserver "github.com/ImBadAtJavaScriptM/Shift-My/internal/acme"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/capture"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/config"
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/dashboard"
@@ -44,11 +45,22 @@ func run() error {
 	}
 	defer store.Close()
 
-	token, err := randomToken()
+	profileToken, err := randomToken()
 	if err != nil {
 		return err
 	}
-	if err := store.EnsureInstallation(token); err != nil {
+	if err := store.EnsureInstallation(profileToken); err != nil {
+		return err
+	}
+	stage2Token, err := randomToken()
+	if err != nil {
+		return err
+	}
+	clientIdentifier, err := randomToken()
+	if err != nil {
+		return err
+	}
+	if err := store.EnsureEnrollmentCredentials(profileToken, stage2Token, clientIdentifier); err != nil {
 		return err
 	}
 
@@ -57,6 +69,10 @@ func run() error {
 		return err
 	}
 	authority, err := pki.Load(cfg.CACertPath, cfg.CAKeyPath)
+	if err != nil {
+		return err
+	}
+	identityAuthority, err := pki.Load(cfg.IdentityCACertPath, cfg.IdentityCAKeyPath)
 	if err != nil {
 		return err
 	}
@@ -74,7 +90,11 @@ func run() error {
 	}
 	dashboardHandler := dashboard.New(store, location.New(store), dashboard.WithProfileConfig(profileCfg))
 	dohHandler := doh.New(store, cfg.PublicIP, policy)
-	publicHandler := publicserver.NewPublic(cfg.PublicHost, cfg.AdminPassword, dashboardHandler, dohHandler)
+	acmeServer, err := acmeserver.New(cfg.PublicHost, store, identityAuthority)
+	if err != nil {
+		return err
+	}
+	publicHandler := publicserver.NewPublic(cfg.PublicHost, cfg.AdminPassword, dashboardHandler, dohHandler, acmeServer.Handler())
 	labHandler := proxy.NewWithRecorder(authority, store, policy, recorder)
 
 	publicCert, err := tls.LoadX509KeyPair(cfg.PublicCertPath, cfg.PublicKeyPath)

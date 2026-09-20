@@ -15,7 +15,9 @@
     </header>
 
     <section class="grid status-grid" aria-label="experiment status">
-      <article class="card"><span>Profile</span><strong id="profile-status">generated</strong></article>
+      <article class="card"><span>Stage 1</span><strong id="profile-status">generated</strong></article>
+      <article class="card"><span>Identity</span><strong id="identity-status">waiting</strong></article>
+      <article class="card"><span>Stage 2</span><strong id="stage2-status">waiting</strong></article>
       <article class="card"><span>DoH</span><strong id="doh-status">waiting</strong></article>
       <article class="card"><span>Lab TLS</span><strong id="proxy-status">waiting</strong></article>
       <article class="card"><span>Revision</span><strong id="revision">0</strong></article>
@@ -23,8 +25,12 @@
 
     <section class="card target-card">
       <h2>1. Install the test profile</h2>
-      <p class="subtle">The profile contains the project test root and managed DoH rules for only the three lab subdomains.</p>
+      <p class="subtle">Stage 1 contains the declarative bootstrap, a hardware-bound attested device identity request, and managed DoH rules for only the three lab subdomains. iOS then retrieves Stage 2, which installs the project test root.</p>
       <a class="button-link" href="/profile.mobileconfig">Download iPhone profile</a>
+      <div class="reset-row">
+        <button id="reset-enrollment" class="secondary-button" type="button">Reset enrollment</button>
+        <p id="reset-message" class="subtle" role="status"></p>
+      </div>
     </section>
 
     <section class="card target-card">
@@ -43,7 +49,7 @@
     <section class="card next-card">
       <h2>3. Validate the controlled path</h2>
       <ol>
-        <li>Confirm the DoH card changes to <strong>seen</strong>.</li>
+        <li>Confirm Identity and Stage 2 change to <strong>seen</strong>, then confirm DoH changes to <strong>seen</strong>.</li>
         <li>Open <a id="lab-url" href="#">the controlled lab location endpoint</a> on the iPhone.</li>
         <li>Confirm the returned latitude, longitude, label, and revision match the target above, then confirm Lab TLS changes to <strong>seen</strong>.</li>
       </ol>
