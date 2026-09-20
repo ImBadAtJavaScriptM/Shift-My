@@ -22,6 +22,12 @@ func NewPublic(publicHost, adminPassword string, dashboardHandler, dohHandler ht
 			dohHandler.ServeHTTP(w, r)
 			return
 		}
+		if r.URL.Path == "/api/profile/standard.mobileconfig" {
+			// iOS retrieves Stage 2 automatically and cannot answer dashboard
+			// Basic Auth. The dashboard handler validates its dedicated token.
+			dashboardHandler.ServeHTTP(w, r)
+			return
+		}
 		username, password, ok := r.BasicAuth()
 		if !ok || !constantTimeEqual(username, "shiftmy") || !constantTimeEqual(password, adminPassword) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="Shift-My Lab", charset="UTF-8"`)
