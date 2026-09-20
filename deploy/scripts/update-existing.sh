@@ -60,11 +60,23 @@ if [[ -x "$SERVER_BIN" ]]; then
   cp -a "$SERVER_BIN" "$PREV_BIN"
 fi
 
-go build -C "$SRC" -trimpath -o "$SERVER_BIN.new" ./cmd/server
-go build -C "$SRC" -trimpath -o "$CA_BOOTSTRAP.new" ./cmd/ca-bootstrap
-install -o root -g root -m 0755 "$SERVER_BIN.new" "$SERVER_BIN"
-install -o root -g root -m 0755 "$CA_BOOTSTRAP.new" "$CA_BOOTSTRAP"
-rm -f "$SERVER_BIN.new" "$CA_BOOTSTRAP.new"
+# For VMs without outbound module access, Cloud Shell can cross-build the two
+# Linux/amd64 binaries and stage them under SHIFT_MY_PREBUILT_DIR.
+if [[ -n "${SHIFT_MY_PREBUILT_DIR:-}" ]]; then
+  if [[ ! -x "$SHIFT_MY_PREBUILT_DIR/shift-my-server" || ! -x "$SHIFT_MY_PREBUILT_DIR/shift-my-ca-bootstrap" ]]; then
+    echo "prebuilt binaries missing from $SHIFT_MY_PREBUILT_DIR" >&2
+    exit 1
+  fi
+  echo "Installing prebuilt Shift-My binaries from $SHIFT_MY_PREBUILT_DIR."
+  install -o root -g root -m 0755 "$SHIFT_MY_PREBUILT_DIR/shift-my-server" "$SERVER_BIN"
+  install -o root -g root -m 0755 "$SHIFT_MY_PREBUILT_DIR/shift-my-ca-bootstrap" "$CA_BOOTSTRAP"
+else
+  go build -C "$SRC" -trimpath -o "$SERVER_BIN.new" ./cmd/server
+  go build -C "$SRC" -trimpath -o "$CA_BOOTSTRAP.new" ./cmd/ca-bootstrap
+  install -o root -g root -m 0755 "$SERVER_BIN.new" "$SERVER_BIN"
+  install -o root -g root -m 0755 "$CA_BOOTSTRAP.new" "$CA_BOOTSTRAP"
+  rm -f "$SERVER_BIN.new" "$CA_BOOTSTRAP.new"
+fi
 
 # The attested enrollment flow uses a CA that is separate from the lab TLS CA.
 if [[ ! -f /etc/shift-my/identity-ca-key.pem || ! -f /etc/shift-my/identity-ca.pem ]]; then
