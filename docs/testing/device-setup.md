@@ -1,40 +1,71 @@
 # iPhone controlled-lab setup
 
-These steps validate the Shift-My v1 profile → DoH → controlled TLS path on your own iPhone. They do not change Apple Maps or Core Location.
+These steps validate the two-stage profile → hardware-bound ACME identity → controlled DoH → controlled TLS path on your own iPhone. They do not change Apple Maps, Find My, Core Location, or Apple production services.
 
 ## Before the phone
 
-1. Deploy the server on a VPS or Compute Engine VM using a hostname you control.
-2. If the public deployment uses only IPv6, confirm the iPhone's current Wi-Fi or cellular network has IPv6 connectivity by loading the dashboard in Safari first.
-3. Save the dashboard credentials printed by the bootstrap script. The username is `shiftmy`; the password is randomly generated and stored in `/etc/shift-my/shift-my.env` on the server.
-4. Confirm `https://<public-host>/` loads in Safari or another browser and authenticate when prompted.
-5. In the dashboard, enter a clearly recognizable test coordinate and press **Set target**.
+1. Deploy the server using a hostname you control.
+2. If the deployment is IPv6-only, first confirm the iPhone's current Wi-Fi or cellular network can load the dashboard over IPv6.
+3. Save the dashboard credentials printed by the bootstrap script. The username is `shiftmy`; the password is stored in `/etc/shift-my/shift-my.env`.
+4. Confirm `https://<public-host>/` loads in Safari and authenticate.
+5. In the dashboard, set a clearly recognizable test coordinate.
 
-## Install the profile
+## Replace the old test profile
 
-1. On the iPhone, open `https://<public-host>/` in Safari and authenticate with the dashboard credentials.
-2. Tap **Download iPhone profile** and allow the download.
-3. Open **Settings → General → VPN & Device Management** and select the downloaded **Shift-My Test** profile.
-4. Review the payloads and install the profile.
-5. If iOS requires explicit trust for the project test root, open **Settings → General → About → Certificate Trust Settings** and enable full trust only for the Shift-My test root you just installed.
+If an earlier **Shift-My Test** profile is installed:
 
-The generated profile is removable and its managed DoH rules are scoped only to `loc-a.<public-host>`, `loc-b.<public-host>`, and `device-loc.<public-host>`. The dashboard/profile/API require Basic authentication; the DoH endpoint does not because the installed profile uses its independent high-entropy path token.
+1. Open **Settings → General → VPN & Device Management**.
+2. Remove the old Shift-My Test profile.
+3. Return to Safari.
 
-## Validate DoH
+Do not install both generations simultaneously.
 
-1. Return to the authenticated dashboard.
-2. Wait for the **DoH** card to change from `waiting` to `seen`.
-3. If it stays on `waiting`, confirm the profile is installed, the public hostname resolves to the server's configured address family, and TCP/443 is reachable from the iPhone's current network.
+## Install Stage 1
 
-## Validate controlled TLS
+1. Open the authenticated dashboard in Safari.
+2. Tap **Download iPhone profile**.
+3. Open **Settings → General → VPN & Device Management**.
+4. Select **Shift-My Test** and review the payloads.
+5. Install it.
 
-1. On the same iPhone, open `https://device-loc.<public-host>/v1/location`.
-2. The page should return JSON containing the target latitude, longitude, label, and revision from the dashboard.
-3. Return to the dashboard and confirm **Lab TLS** changes to `seen`.
-4. Change the target in the dashboard and reload the controlled lab URL; the JSON revision should increment and the coordinate should update.
+Stage 1 contains the declarative bootstrap, a hardware-bound attested device identity request, and controlled DoH configuration. It does not contain the lab TLS root CA.
 
-A successful result proves that the installed profile can route the controlled hostname through the project's DoH endpoint and complete TLS to a project-owned lab service. It is not evidence that iOS system location has been overridden.
+After installation, iOS should contact the project's ACME directory, generate the hardware-bound identity key, answer the managed-device attestation challenge, finalize the identity certificate request, and retrieve Stage 2 through the declaration.
+
+## Watch enrollment status
+
+Return to the dashboard. The relevant cards are independent, so they may change in a different order during retries:
+
+- **Identity** → `seen` after the attested identity certificate is issued.
+- **Stage 2** → `seen` after iOS retrieves the second profile.
+- **DoH** → `seen` after the managed DNS path is used.
+- **Lab TLS** → `seen` after a controlled lab hostname completes TLS.
+
+If Stage 2 installs the project test root but iOS still asks for explicit certificate trust, open **Settings → General → About → Certificate Trust Settings** and enable trust only for the Shift-My test root you just installed.
+
+## Validate the controlled path
+
+1. Wait for **Stage 2** and **DoH** to show `seen`.
+2. Open:
+   `https://device-loc.<public-host>/v1/location`
+3. Confirm the JSON contains the dashboard's selected latitude, longitude, label, and revision.
+4. Return to the dashboard and confirm **Lab TLS** is `seen`.
+5. Change the target and reload the controlled URL; its revision and coordinates should update.
+
+A successful result proves the two-stage enrollment, attested identity, controlled DNS, and controlled TLS plumbing. It is not evidence that iOS system location has been overridden.
+
+## Recover from a failed enrollment
+
+If Identity or Stage 2 remains stuck after retrying the install:
+
+1. Remove the current Shift-My Test profile from the iPhone.
+2. In the authenticated dashboard, press **Reset enrollment** and confirm.
+3. The server rotates the DoH token, Stage 2 token, and ClientIdentifier and clears ACME enrollment state.
+4. Your saved target coordinates, label, and revision remain unchanged.
+5. Download and install the newly generated Stage 1 profile.
+
+Do not reuse an older downloaded Stage 1 profile after resetting enrollment because its identifiers and Stage 2 URL are no longer valid.
 
 ## Optional diagnostics
 
-Server-side capture is disabled by default. If you deliberately enable `SHIFT_MY_CAPTURE_ENABLED=true`, captures are limited to the controlled lab endpoint, redact common credential headers, and cap stored bodies at 2 MiB. Do not enable capture unless you need it for this lab.
+Server-side capture remains disabled by default. If deliberately enabled with `SHIFT_MY_CAPTURE_ENABLED=true`, it applies only to the controlled lab endpoint, redacts common credential headers, and caps stored bodies at 2 MiB.
