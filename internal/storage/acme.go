@@ -240,11 +240,16 @@ WHERE id = ? AND challenge_status = 'pending' AND status = 'pending'`,
 	return nil
 }
 
-func (s *Store) FinalizeACMEOrder(orderID, csrSHA256, certificateSerial string, certificatePEM []byte, at time.Time) error {
-	if csrSHA256 == "" || certificateSerial == "" || len(certificatePEM) == 0 {
+func (s *Store) FinalizeACMEOrder(orderID, csrSHA256, certificateSerial string, certificatePEM []byte, identityFingerprint string, at time.Time) error {
+	if csrSHA256 == "" || certificateSerial == "" || len(certificatePEM) == 0 || strings.TrimSpace(identityFingerprint) == "" {
 		return errors.New("complete issuance metadata is required")
 	}
-	result, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin ACME finalization: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(
 		`UPDATE acme_order
 SET status = 'valid', csr_sha256 = ?, certificate_serial = ?,
     certificate_pem = ?, finalized_at = ?
@@ -264,6 +269,26 @@ WHERE id = ? AND status = 'ready' AND challenge_status = 'valid'`,
 	}
 	if rows != 1 {
 		return ErrACMEConflict
+	}
+	result, err = tx.Exec(
+		`UPDATE installation
+SET identity_enrolled_at = ?, identity_cert_fingerprint = ?
+WHERE id = 1`,
+		at.UTC().Format(time.RFC3339Nano),
+		identityFingerprint,
+	)
+	if err != nil {
+		return fmt.Errorf("record identity enrollment: %w", err)
+	}
+	rows, err = result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("identity enrollment rows affected: %w", err)
+	}
+	if rows != 1 {
+		return errors.New("installation is not initialized")
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit ACME finalization: %w", err)
 	}
 	return nil
 }
