@@ -36,6 +36,10 @@ func NewPublic(publicHost, adminPassword string, dashboardHandler, dohHandler, a
 			dashboardHandler.ServeHTTP(w, r)
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, "/acme/device/") {
+			acmeHandler.ServeHTTP(w, r)
+			return
+		}
 		username, password, ok := r.BasicAuth()
 		if !ok || !constantTimeEqual(username, "shiftmy") || !constantTimeEqual(password, adminPassword) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="Shift-My Lab", charset="UTF-8"`)
