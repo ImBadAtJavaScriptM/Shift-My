@@ -115,3 +115,27 @@ func TestPublicHandlerAllowsACMEWithoutDashboardAuthentication(t *testing.T) {
 		t.Fatalf("status=%d", rr.Code)
 	}
 }
+
+
+func TestPublicHandlerRoutesACMEWithoutDashboardAuthentication(t *testing.T) {
+	dashboard := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("dashboard handler called for ACME")
+	})
+	dohHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("DoH handler called for ACME")
+	})
+	acmeHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/acme/device/directory" {
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	h := NewPublic("lab.example.test", "secret-password", dashboard, dohHandler, acmeHandler)
+	req := httptest.NewRequest(http.MethodGet, "https://lab.example.test/acme/device/directory", nil)
+	req.Host = "lab.example.test"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status=%d", rr.Code)
+	}
+}
