@@ -403,13 +403,10 @@ func (s *Server) finalize(w http.ResponseWriter, r *http.Request, req *signedReq
 		hex.EncodeToString(csrHash[:]),
 		issued.Leaf.SerialNumber.Text(16),
 		issued.ChainPEM,
+		issued.Fingerprint,
 		s.now(),
 	); err != nil {
-		s.fail(w, http.StatusInternalServerError, "serverInternal", "could not persist issued certificate")
-		return
-	}
-	if err := s.store.MarkIdentityEnrolled(s.now(), issued.Fingerprint); err != nil {
-		s.fail(w, http.StatusInternalServerError, "serverInternal", "could not record identity enrollment")
+		s.fail(w, http.StatusInternalServerError, "serverInternal", "could not persist issued identity")
 		return
 	}
 	o, _ = s.store.ACMEOrder(o.ID)
