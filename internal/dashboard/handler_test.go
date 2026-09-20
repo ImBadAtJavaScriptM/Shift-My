@@ -3,12 +3,15 @@ package dashboard
 import (
     "bytes"
     "encoding/json"
+    "net"
     "net/http"
     "net/http/httptest"
     "testing"
     "time"
 
     "github.com/ImBadAtJavaScriptM/Shift-My/internal/location"
+
+    "github.com/ImBadAtJavaScriptM/Shift-My/internal/profile"
     "github.com/ImBadAtJavaScriptM/Shift-My/internal/storage"
 )
 
@@ -176,5 +179,52 @@ func TestResetEnrollmentRequiresExplicitJSONConfirmation(t *testing.T) {
     h.ServeHTTP(rr, req)
     if rr.Code != http.StatusMethodNotAllowed {
         t.Fatalf("GET status=%d body=%s", rr.Code, rr.Body.String())
+    }
+}
+
+
+func TestStage2ProfileRequiresDedicatedTokenAndRecordsDelivery(t *testing.T) {
+    store, err := storage.Open(t.TempDir() + "/state.db")
+    if err != nil {
+        t.Fatal(err)
+    }
+    defer store.Close()
+    if err := store.EnsureInstallation("legacy"); err != nil {
+        t.Fatal(err)
+    }
+    if err := store.EnsureEnrollmentCredentials("doh-token", "stage2-secret", "client-id"); err != nil {
+        t.Fatal(err)
+    }
+    cfg := profile.Config{
+        DisplayName:  "Shift-My Test",
+        PublicHost:   "lab.example.test",
+        PublicIP:     net.ParseIP("2001:db8::10"),
+        RootCertDER:  []byte{1, 2, 3},
+        MatchDomains: []string{"device-loc.lab.example.test"},
+    }
+    h := New(store, location.New(store), WithProfileConfig(cfg))
+
+    wrong := httptest.NewRequest(http.MethodGet, "/api/profile/standard.mobileconfig?p=wrong", nil)
+    wrongRR := httptest.NewRecorder()
+    h.ServeHTTP(wrongRR, wrong)
+    if wrongRR.Code != http.StatusUnauthorized {
+        t.Fatalf("wrong token status=%d body=%s", wrongRR.Code, wrongRR.Body.String())
+    }
+
+    good := httptest.NewRequest(http.MethodGet, "/api/profile/standard.mobileconfig?p=stage2-secret", nil)
+    goodRR := httptest.NewRecorder()
+    h.ServeHTTP(goodRR, good)
+    if goodRR.Code != http.StatusOK {
+        t.Fatalf("good token status=%d body=%s", goodRR.Code, goodRR.Body.String())
+    }
+    if got := goodRR.Header().Get("Content-Type"); got != "application/x-apple-aspen-config" {
+        t.Fatalf("Content-Type=%q", got)
+    }
+    inst, err := store.Installation()
+    if err != nil {
+        t.Fatal(err)
+    }
+    if inst.Stage2DeliveredAt == nil || inst.Stage2DeliveryCount != 1 {
+        t.Fatalf("stage2 state=%+v", inst)
     }
 }
