@@ -2,6 +2,8 @@ const $ = (id) => document.getElementById(id);
 
 function renderStatus(status) {
   $('profile-status').textContent = status.profile_status === 'traffic_seen' ? 'traffic seen' : 'generated';
+  $('identity-status').textContent = status.identity_enrolled ? 'seen' : 'waiting';
+  $('stage2-status').textContent = status.stage2_delivered ? 'seen' : 'waiting';
   $('doh-status').textContent = status.doh_seen ? 'seen' : 'waiting';
   $('proxy-status').textContent = status.proxy_seen ? 'seen' : 'waiting';
   $('revision').textContent = String(status.location_revision ?? 0);
