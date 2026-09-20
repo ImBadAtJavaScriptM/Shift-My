@@ -441,7 +441,7 @@ type signedEndpoint func(http.ResponseWriter, *http.Request, *signedRequest, sto
 func (s *Server) signed(newAccount bool, next signedEndpoint) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.addNonce(w)
-		w.Header().Add("Link", "<"+s.baseURL+"/directory>;rel="index"")
+		w.Header().Add("Link", "<"+s.baseURL+"/directory>;rel=\"index\"")
 		if !strings.HasPrefix(r.Header.Get("Content-Type"), contentTypeJOSE) {
 			s.fail(w, http.StatusBadRequest, "malformed", "application/jose+json is required")
 			return
@@ -505,7 +505,7 @@ func (s *Server) signed(newAccount bool, next signedEndpoint) http.HandlerFunc {
 func (s *Server) plain(next func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.addNonce(w)
-		w.Header().Add("Link", "<"+s.baseURL+"/directory>;rel="index"")
+		w.Header().Add("Link", "<"+s.baseURL+"/directory>;rel=\"index\"")
 		next(w, r)
 	}
 }
