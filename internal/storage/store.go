@@ -77,21 +77,28 @@ CREATE TABLE IF NOT EXISTS installation (
 CREATE TABLE IF NOT EXISTS acme_account (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
 	account_key_thumbprint TEXT NOT NULL DEFAULT '',
+	account_jwk TEXT NOT NULL DEFAULT '',
 	status TEXT NOT NULL DEFAULT 'pending',
 	created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS acme_order (
 	id TEXT PRIMARY KEY,
+	account_id INTEGER NOT NULL DEFAULT 1,
 	client_identifier TEXT NOT NULL,
 	status TEXT NOT NULL,
+	challenge_token TEXT NOT NULL DEFAULT '',
 	challenge_token_hash TEXT NOT NULL,
 	challenge_status TEXT NOT NULL,
+	attested_spki_sha256 TEXT NOT NULL DEFAULT '',
 	csr_sha256 TEXT NOT NULL DEFAULT '',
 	certificate_serial TEXT NOT NULL DEFAULT '',
+	certificate_pem BLOB,
 	expires_at TEXT NOT NULL,
 	created_at TEXT NOT NULL,
 	finalized_at TEXT
 );
+CREATE UNIQUE INDEX IF NOT EXISTS acme_order_client_identifier
+ON acme_order(client_identifier);
 CREATE TABLE IF NOT EXISTS acme_nonce (
 	nonce_hash TEXT PRIMARY KEY,
 	expires_at TEXT NOT NULL,
@@ -99,6 +106,19 @@ CREATE TABLE IF NOT EXISTS acme_nonce (
 );`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create enrollment schema: %w", err)
+	}
+
+	for _, migration := range []string{
+		`ALTER TABLE acme_account ADD COLUMN account_jwk TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE acme_order ADD COLUMN account_id INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE acme_order ADD COLUMN challenge_token TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE acme_order ADD COLUMN attested_spki_sha256 TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE acme_order ADD COLUMN certificate_pem BLOB`,
+	} {
+		if _, err := db.Exec(migration); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migrate ACME schema: %w", err)
+		}
 	}
 	return &Store{db: db}, nil
 }
