@@ -3,59 +3,116 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Shift-My Test Lab</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <title>Shift-My Location Switcher</title>
+  <link rel="stylesheet" href="/static/app.css?v=location-switcher-1">
 </head>
 <body>
   <main class="shell">
-    <header>
-      <p class="eyebrow">CONTROLLED LOCATION LAB</p>
-      <h1>Shift-My Test</h1>
-      <p class="subtle">A stock-iPhone configuration-profile and networking experiment using only endpoints we control.</p>
+    <header class="hero">
+      <div>
+        <p class="eyebrow">CONTROLLED LOCATION LAB</p>
+        <h1>Shift-My</h1>
+        <p class="subtle">Search, save, and switch the location returned by your controlled iPhone lab endpoint.</p>
+      </div>
+      <span class="live-pill">● live</span>
     </header>
 
-    <section class="grid status-grid" aria-label="experiment status">
-      <article class="card"><span>Stage 1</span><strong id="profile-status">generated</strong></article>
-      <article class="card"><span>Identity</span><strong id="identity-status">waiting</strong></article>
-      <article class="card"><span>Stage 2</span><strong id="stage2-status">waiting</strong></article>
-      <article class="card"><span>DoH</span><strong id="doh-status">waiting</strong></article>
-      <article class="card"><span>Lab TLS</span><strong id="proxy-status">waiting</strong></article>
-      <article class="card"><span>Revision</span><strong id="revision">0</strong></article>
+    <section class="grid status-grid" aria-label="connection health">
+      <article class="card status-card"><span>Identity</span><strong id="identity-status">waiting</strong></article>
+      <article class="card status-card"><span>Stage 2</span><strong id="stage2-status">waiting</strong></article>
+      <article class="card status-card"><span>DNS</span><strong id="doh-status">waiting</strong></article>
+      <article class="card status-card"><span>Lab TLS</span><strong id="proxy-status">waiting</strong></article>
+      <article class="card status-card"><span>Revision</span><strong id="revision">0</strong></article>
     </section>
 
-    <section class="card target-card">
-      <h2>1. Install the test profile</h2>
-      <p class="subtle">Stage 1 contains the declarative bootstrap, a hardware-bound attested device identity request, and managed DoH rules for only the three lab subdomains. iOS then retrieves Stage 2, which installs the project test root.</p>
-      <a class="button-link" href="/profile.mobileconfig">Download iPhone profile</a>
-      <div class="reset-row">
-        <button id="reset-enrollment" class="secondary-button" type="button">Reset enrollment</button>
-        <p id="reset-message" class="subtle" role="status"></p>
+    <section class="card current-card">
+      <div class="section-heading">
+        <div>
+          <p class="section-kicker">CURRENT TARGET</p>
+          <h2 id="current-target-label">Loading…</h2>
+          <p id="current-target-coords" class="mono subtle">—</p>
+          <p id="current-target-time" class="subtle compact">Waiting for status…</p>
+        </div>
+        <a id="open-map" class="secondary-button link-button" target="_blank" rel="noopener">Open map</a>
       </div>
+      <div class="map-shell">
+        <iframe id="map-preview" title="Current target map" loading="lazy"></iframe>
+      </div>
+      <p class="map-credit subtle">Map preview © OpenStreetMap contributors.</p>
     </section>
 
     <section class="card target-card">
-      <h2>2. Choose the lab target</h2>
+      <div class="section-heading">
+        <div>
+          <p class="section-kicker">SWITCH LOCATION</p>
+          <h2>Search for a place</h2>
+        </div>
+      </div>
+
+      <form id="place-search-form" class="search-row">
+        <input id="place-query" type="search" autocomplete="off" placeholder="Santa Monica Pier, Disneyland, Miami Beach…" required>
+        <button type="submit">Search</button>
+      </form>
+      <p id="search-message" class="subtle compact" role="status"></p>
+      <div id="search-results" class="search-results"></div>
+
+      <div class="divider"></div>
+
       <form id="location-form">
-        <label>Label<input id="label" name="label" placeholder="Times Square"></label>
+        <label>Label<input id="label" name="label" placeholder="Santa Monica Pier"></label>
         <div class="coords">
           <label>Latitude<input id="latitude" name="latitude" inputmode="decimal" type="number" min="-90" max="90" step="any" required></label>
           <label>Longitude<input id="longitude" name="longitude" inputmode="decimal" type="number" min="-180" max="180" step="any" required></label>
         </div>
-        <button type="submit">Set target</button>
+        <div class="action-row">
+          <button type="submit">Set target</button>
+          <button id="save-preset" class="secondary-button" type="button">Save location</button>
+        </div>
         <p id="save-message" class="subtle" role="status"></p>
       </form>
     </section>
 
-    <section class="card next-card">
-      <h2>3. Validate the controlled path</h2>
-      <ol>
-        <li>Confirm Identity and Stage 2 change to <strong>seen</strong>, then confirm DoH changes to <strong>seen</strong>.</li>
-        <li>Open <a id="lab-url" href="#">the controlled lab location endpoint</a> on the iPhone.</li>
-        <li>Confirm the returned latitude, longitude, label, and revision match the target above, then confirm Lab TLS changes to <strong>seen</strong>.</li>
-      </ol>
-      <p class="warning">This lab does not intercept, modify, or claim to override Apple Maps, Find My, Core Location, or third-party production location services.</p>
+    <section class="two-column">
+      <section class="card target-card">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">ONE-TAP</p>
+            <h2>Saved locations</h2>
+          </div>
+        </div>
+        <div id="preset-list" class="location-list"><p class="subtle">No saved locations yet.</p></div>
+      </section>
+
+      <section class="card target-card">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">RECENT</p>
+            <h2>Location history</h2>
+          </div>
+        </div>
+        <div id="history-list" class="location-list"><p class="subtle">No switches recorded yet.</p></div>
+      </section>
     </section>
+
+    <section class="card next-card">
+      <h2>Verify on the iPhone</h2>
+      <p class="subtle">The installed hardware-bound profile stays in place. After switching a target, open the controlled endpoint and confirm its label, coordinates, and revision update.</p>
+      <a id="lab-url" class="button-link" href="#">Open controlled endpoint</a>
+      <p class="warning">This dashboard changes only the controlled Shift-My lab endpoint. It does not claim to override Apple Maps, Find My, Core Location, or third-party production location services.</p>
+    </section>
+
+    <details class="card advanced-card">
+      <summary>Profile & enrollment controls</summary>
+      <div class="advanced-body">
+        <p class="subtle">Stage 1 contains the declarative bootstrap, hardware-bound attested identity request, and controlled DoH. Stage 2 installs the project test root and controlled DNS.</p>
+        <div class="action-row">
+          <a class="button-link" href="/profile.mobileconfig">Download iPhone profile</a>
+          <button id="reset-enrollment" class="secondary-button" type="button">Reset enrollment</button>
+        </div>
+        <p id="reset-message" class="subtle" role="status"></p>
+      </div>
+    </details>
   </main>
-  <script src="/static/app.js?v=target-edit-fix-1" defer></script>
+  <script src="/static/app.js?v=location-switcher-1" defer></script>
 </body>
 </html>
