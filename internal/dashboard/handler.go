@@ -3,6 +3,7 @@ package dashboard
 import (
 	"crypto/rand"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"io/fs"
 	"mime"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/ImBadAtJavaScriptM/Shift-My/internal/location"
@@ -87,6 +89,8 @@ func New(store *storage.Store, loc *location.Service, options ...Option) http.Ha
 	}))
 	mux.HandleFunc("/api/status", h.status)
 	mux.HandleFunc("/api/location", h.setLocation)
+	mux.HandleFunc("/api/location/history", h.locationHistory)
+	mux.HandleFunc("/api/location/presets", h.locationPresets)
 	mux.HandleFunc("/api/enrollment/reset", h.resetEnrollment)
 	mux.HandleFunc("/profile.mobileconfig", h.mobileconfig)
 	mux.HandleFunc("/api/profile/standard.mobileconfig", h.stage2Mobileconfig)
@@ -156,6 +160,71 @@ func (h *handler) setLocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, safeStatus(inst))
+}
+
+
+func (h *handler) locationHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	items, err := h.store.LocationHistory(12)
+	if err != nil {
+		http.Error(w, "read location history", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (h *handler) locationPresets(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		items, err := h.store.LocationPresets()
+		if err != nil {
+			http.Error(w, "read location presets", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, items)
+	case http.MethodPost:
+		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil || mediaType != "application/json" {
+			http.Error(w, "application/json required", http.StatusUnsupportedMediaType)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxLocationBody)
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		var req locationRequest
+		if err := dec.Decode(&req); err != nil || ensureSingleJSONValue(dec) != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		item, err := h.store.SaveLocationPreset(req.Label, req.Latitude, req.Longitude)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, http.StatusCreated, item)
+	case http.MethodDelete:
+		id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+		if err != nil || id <= 0 {
+			http.Error(w, "valid preset id required", http.StatusBadRequest)
+			return
+		}
+		if err := h.store.DeleteLocationPreset(id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "preset not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "delete location preset", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		w.Header().Set("Allow", "GET, POST, DELETE")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (h *handler) resetEnrollment(w http.ResponseWriter, r *http.Request) {
