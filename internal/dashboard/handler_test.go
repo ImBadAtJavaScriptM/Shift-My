@@ -6,6 +6,7 @@ import (
     "net"
     "net/http"
     "net/http/httptest"
+    "strconv"
     "testing"
     "time"
 
@@ -240,5 +241,80 @@ func TestStaticAssetsAreNoStore(t *testing.T) {
 	}
 	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control=%q", got)
+	}
+}
+
+
+func TestLocationHistoryAndPresetAPIs(t *testing.T) {
+	h := newTestHandler(t)
+
+	set := func(label string, lat, lon float64) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{
+			"latitude": lat,
+			"longitude": lon,
+			"label": label,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/location", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("set %s status=%d body=%s", label, rr.Code, rr.Body.String())
+		}
+	}
+
+	set("Times Square", 40.758, -73.9855)
+	set("Santa Monica Pier", 34.0094, -118.4973)
+
+	historyReq := httptest.NewRequest(http.MethodGet, "/api/location/history", nil)
+	historyRR := httptest.NewRecorder()
+	h.ServeHTTP(historyRR, historyReq)
+	if historyRR.Code != http.StatusOK {
+		t.Fatalf("history status=%d body=%s", historyRR.Code, historyRR.Body.String())
+	}
+	var history []storage.LocationHistoryEntry
+	if err := json.Unmarshal(historyRR.Body.Bytes(), &history); err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 || history[0].Label != "Santa Monica Pier" || history[0].Revision != 2 {
+		t.Fatalf("history=%+v", history)
+	}
+
+	presetBody := []byte(`{"latitude":34.0094,"longitude":-118.4973,"label":"Santa Monica Pier"}`)
+	presetReq := httptest.NewRequest(http.MethodPost, "/api/location/presets", bytes.NewReader(presetBody))
+	presetReq.Header.Set("Content-Type", "application/json")
+	presetRR := httptest.NewRecorder()
+	h.ServeHTTP(presetRR, presetReq)
+	if presetRR.Code != http.StatusCreated {
+		t.Fatalf("preset create status=%d body=%s", presetRR.Code, presetRR.Body.String())
+	}
+	var preset storage.LocationPreset
+	if err := json.Unmarshal(presetRR.Body.Bytes(), &preset); err != nil {
+		t.Fatal(err)
+	}
+	if preset.ID <= 0 || preset.Label != "Santa Monica Pier" {
+		t.Fatalf("preset=%+v", preset)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/location/presets", nil)
+	listRR := httptest.NewRecorder()
+	h.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("preset list status=%d body=%s", listRR.Code, listRR.Body.String())
+	}
+	var presets []storage.LocationPreset
+	if err := json.Unmarshal(listRR.Body.Bytes(), &presets); err != nil {
+		t.Fatal(err)
+	}
+	if len(presets) != 1 || presets[0].ID != preset.ID {
+		t.Fatalf("presets=%+v", presets)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/location/presets?id="+strconv.FormatInt(preset.ID, 10), nil)
+	deleteRR := httptest.NewRecorder()
+	h.ServeHTTP(deleteRR, deleteReq)
+	if deleteRR.Code != http.StatusNoContent {
+		t.Fatalf("preset delete status=%d body=%s", deleteRR.Code, deleteRR.Body.String())
 	}
 }
