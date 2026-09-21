@@ -1,15 +1,30 @@
 const $ = (id) => document.getElementById(id);
 
-function renderStatus(status) {
+const locationForm = $('location-form');
+let locationFormDirty = false;
+
+for (const id of ['label', 'latitude', 'longitude']) {
+  $(id).addEventListener('input', () => {
+    locationFormDirty = true;
+  });
+}
+
+function locationFieldsAreBeingEdited() {
+  return locationFormDirty || locationForm.contains(document.activeElement);
+}
+
+function renderStatus(status, { forceLocation = false } = {}) {
   $('profile-status').textContent = status.profile_status === 'traffic_seen' ? 'traffic seen' : 'generated';
   $('identity-status').textContent = status.identity_enrolled ? 'seen' : 'waiting';
   $('stage2-status').textContent = status.stage2_delivered ? 'seen' : 'waiting';
   $('doh-status').textContent = status.doh_seen ? 'seen' : 'waiting';
   $('proxy-status').textContent = status.proxy_seen ? 'seen' : 'waiting';
   $('revision').textContent = String(status.location_revision ?? 0);
-  if (status.selected_label) $('label').value = status.selected_label;
-  if (status.selected_latitude !== undefined) $('latitude').value = status.selected_latitude;
-  if (status.selected_longitude !== undefined) $('longitude').value = status.selected_longitude;
+  if (forceLocation || !locationFieldsAreBeingEdited()) {
+    if (status.selected_label) $('label').value = status.selected_label;
+    if (status.selected_latitude !== undefined) $('latitude').value = status.selected_latitude;
+    if (status.selected_longitude !== undefined) $('longitude').value = status.selected_longitude;
+  }
 }
 
 async function refreshStatus() {
@@ -22,7 +37,7 @@ const labURL = `https://device-loc.${window.location.hostname}/v1/location`;
 $('lab-url').href = labURL;
 $('lab-url').textContent = labURL;
 
-$('location-form').addEventListener('submit', async (event) => {
+locationForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const message = $('save-message');
   message.textContent = 'Saving…';
@@ -37,7 +52,8 @@ $('location-form').addEventListener('submit', async (event) => {
       }),
     });
     if (!response.ok) throw new Error(await response.text());
-    renderStatus(await response.json());
+    locationFormDirty = false;
+    renderStatus(await response.json(), { forceLocation: true });
     message.textContent = 'Target saved. Open the controlled lab endpoint to verify this revision.';
   } catch (error) {
     message.textContent = `Could not save target: ${String(error.message || error)}`;
