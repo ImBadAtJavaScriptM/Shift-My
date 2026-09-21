@@ -80,7 +80,11 @@ func New(store *storage.Store, loc *location.Service, options ...Option) http.Ha
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticRoot))))
+	staticHandler := http.StripPrefix("/static/", http.FileServer(http.FS(staticRoot)))
+	mux.Handle("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		staticHandler.ServeHTTP(w, r)
+	}))
 	mux.HandleFunc("/api/status", h.status)
 	mux.HandleFunc("/api/location", h.setLocation)
 	mux.HandleFunc("/api/enrollment/reset", h.resetEnrollment)

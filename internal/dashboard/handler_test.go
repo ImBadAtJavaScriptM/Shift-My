@@ -228,3 +228,17 @@ func TestStage2ProfileRequiresDedicatedTokenAndRecordsDelivery(t *testing.T) {
         t.Fatalf("stage2 state=%+v", inst)
     }
 }
+
+
+func TestStaticAssetsAreNoStore(t *testing.T) {
+	h := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/static/app.js?v=target-edit-fix-1", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control=%q", got)
+	}
+}
