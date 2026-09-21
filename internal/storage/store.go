@@ -108,6 +108,44 @@ CREATE TABLE IF NOT EXISTS acme_nonce (
 		return nil, fmt.Errorf("create enrollment schema: %w", err)
 	}
 
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS location_history (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	latitude REAL NOT NULL,
+	longitude REAL NOT NULL,
+	label TEXT NOT NULL DEFAULT '',
+	revision INTEGER NOT NULL,
+	created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS location_history_revision
+ON location_history(revision DESC);
+CREATE TABLE IF NOT EXISTS location_preset (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	label TEXT NOT NULL,
+	latitude REAL NOT NULL,
+	longitude REAL NOT NULL,
+	created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS location_preset_unique
+ON location_preset(label COLLATE NOCASE, latitude, longitude);
+CREATE TRIGGER IF NOT EXISTS installation_location_history
+AFTER UPDATE OF location_revision ON installation
+WHEN NEW.location_revision > OLD.location_revision
+BEGIN
+	INSERT INTO location_history(latitude, longitude, label, revision, created_at)
+	VALUES(
+		NEW.selected_latitude,
+		NEW.selected_longitude,
+		NEW.selected_label,
+		NEW.location_revision,
+		strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+	);
+END;
+`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create location dashboard schema: %w", err)
+	}
+
 	for _, migration := range []string{
 		`ALTER TABLE acme_account ADD COLUMN account_jwk TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE acme_order ADD COLUMN account_id INTEGER NOT NULL DEFAULT 1`,
