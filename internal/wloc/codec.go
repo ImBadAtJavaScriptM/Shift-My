@@ -36,7 +36,7 @@ func ParseRequest(data []byte) (Request, error) {
 			req := Request{
 				Version:    binary.BigEndian.Uint16(data[0:2]),
 				FunctionID: binary.BigEndian.Uint32(data[2:6]),
-				Envelope:   "compact",
+				Envelope:   "compact-response-style",
 			}
 			bssids, err := parseAppleWLocBSSIDs(data[10:])
 			if err != nil {
@@ -51,7 +51,7 @@ func ParseRequest(data []byte) (Request, error) {
 	}
 
 	pos := 0
-	req := Request{Version: binary.BigEndian.Uint16(data[pos : pos+2]), Envelope: "legacy"}
+	req := Request{Version: binary.BigEndian.Uint16(data[pos : pos+2]), Envelope: "structured-arpc"}
 	pos += 2
 	var err error
 	if req.Locale, err = readBEString(data, &pos); err != nil {
