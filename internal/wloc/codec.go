@@ -105,6 +105,17 @@ func ParseRequest(data []byte) (Request, error) {
 }
 
 func BuildResponse(req Request, latitude, longitude float64) ([]byte, error) {
+	return buildResponse(req, latitude, longitude, false)
+}
+
+// BuildResponseClearingResultMetadata mirrors the public reference rewriter's
+// response cleanup: num_cell_results (3), num_wifi_results (4), and device_type
+// (33) are omitted after the WifiDevice locations are replaced.
+func BuildResponseClearingResultMetadata(req Request, latitude, longitude float64) ([]byte, error) {
+	return buildResponse(req, latitude, longitude, true)
+}
+
+func buildResponse(req Request, latitude, longitude float64, clearResultMetadata bool) ([]byte, error) {
 	if latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 {
 		return nil, errors.New("coordinates out of range")
 	}
@@ -122,6 +133,12 @@ func BuildResponse(req Request, latitude, longitude float64) ([]byte, error) {
 		}
 		if count > 0 {
 			payload = rewritten
+			if clearResultMetadata {
+				payload, err = clearTopLevelResultMetadata(payload)
+				if err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 	if payload == nil {
@@ -138,6 +155,26 @@ func BuildResponse(req Request, latitude, longitude float64) ([]byte, error) {
 	binary.BigEndian.PutUint32(frame[6:10], uint32(len(payload)))
 	frame = append(frame, payload...)
 	return frame, nil
+}
+
+
+func clearTopLevelResultMetadata(payload []byte) ([]byte, error) {
+	out := make([]byte, 0, len(payload))
+	for pos := 0; pos < len(payload); {
+		start := pos
+		field, _, _, next, err := nextField(payload, pos)
+		if err != nil {
+			return nil, fmt.Errorf("apple wloc protobuf: %w", err)
+		}
+		pos = next
+		switch field {
+		case 3, 4, 33:
+			continue
+		default:
+			out = append(out, payload[start:next]...)
+		}
+	}
+	return out, nil
 }
 
 func buildFreshPayload(bssids []string, latE8, lonE8 int64) ([]byte, error) {
