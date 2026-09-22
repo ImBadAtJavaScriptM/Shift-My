@@ -162,7 +162,21 @@ func (s *Server) serveWLOC(w http.ResponseWriter, r *http.Request, host string) 
 		http.Error(w, "no target location selected", http.StatusConflict)
 		return
 	}
-	payload, err := wloc.BuildResponse(req, *inst.SelectedLatitude, *inst.SelectedLongitude)
+	mode := r.URL.Query().Get("mode")
+	if mode == "" {
+		mode = "preserve"
+	}
+
+	var payload []byte
+	switch mode {
+	case "preserve":
+		payload, err = wloc.BuildResponse(req, *inst.SelectedLatitude, *inst.SelectedLongitude)
+	case "clear-result-metadata":
+		payload, err = wloc.BuildResponseClearingResultMetadata(req, *inst.SelectedLatitude, *inst.SelectedLongitude)
+	default:
+		http.Error(w, "unsupported wloc mode", http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		http.Error(w, "encode controlled wloc response", http.StatusInternalServerError)
 		return
@@ -176,6 +190,7 @@ func (s *Server) serveWLOC(w http.ResponseWriter, r *http.Request, host string) 
 	responseHeaders.Set("Content-Type", "application/octet-stream")
 	responseHeaders.Set("Cache-Control", "no-store")
 	responseHeaders.Set("X-Shift-My-Lab", "controlled-wloc-emulator")
+	responseHeaders.Set("X-Shift-My-WLOC-Mode", mode)
 	if s.recorder != nil {
 		if err := s.recorder.RecordResponse(capture.Metadata{
 			Host: host, Method: r.Method, Path: r.URL.Path, ContentType: "application/octet-stream",
