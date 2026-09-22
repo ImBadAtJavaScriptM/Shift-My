@@ -11,7 +11,7 @@ type Policy struct {
 	hosts   []string
 }
 
-func NewControlled(publicHost string) (Policy, error) {
+func NewControlled(publicHost string, aliases ...string) (Policy, error) {
 	base := normalize(publicHost)
 	if base == "" || strings.ContainsAny(base, "/: ") {
 		return Policy{}, fmt.Errorf("valid controlled public hostname is required")
@@ -23,6 +23,16 @@ func NewControlled(publicHost string) (Policy, error) {
 	allowed := make(map[string]struct{}, len(hosts))
 	for _, host := range hosts {
 		allowed[host] = struct{}{}
+	}
+	for _, alias := range aliases {
+		alias = normalize(alias)
+		if alias == "" {
+			continue
+		}
+		if strings.ContainsAny(alias, "/: ") || blockedProductionBase(alias) {
+			return Policy{}, fmt.Errorf("invalid controlled alias %q", alias)
+		}
+		allowed[alias] = struct{}{}
 	}
 	return Policy{base: base, allowed: allowed, hosts: hosts}, nil
 }
