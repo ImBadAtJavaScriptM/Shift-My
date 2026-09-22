@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"encoding/binary"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
@@ -222,4 +223,90 @@ func TestControlledWLOCEmulatorUsesExactPath(t *testing.T) {
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
 	}
+}
+
+func TestControlledWLOCModeQuerySelectsResponseVariant(t *testing.T) {
+	srv, _ := testServer(t)
+
+	payload := appendBytesFieldForProxyTest(nil, 2, appendBytesFieldForProxyTest(
+		appendBytesFieldForProxyTest(nil, 1, []byte("aa:bb:cc:dd:ee:01")),
+		2,
+		appendVarintFieldForProxyTest(nil, 1, 1),
+	))
+	payload = appendVarintFieldForProxyTest(payload, 3, 7)
+	payload = appendVarintFieldForProxyTest(payload, 4, -1)
+	payload = appendBytesFieldForProxyTest(payload, 33, appendBytesFieldForProxyTest(nil, 1, []byte("N104AP")))
+
+	frame := make([]byte, 10, 10+len(payload))
+	binary.BigEndian.PutUint16(frame[0:2], 1)
+	binary.BigEndian.PutUint32(frame[2:6], 1)
+	binary.BigEndian.PutUint32(frame[6:10], uint32(len(payload)))
+	frame = append(frame, payload...)
+
+	for _, tc := range []struct {
+		name       string
+		query      string
+		wantMode   string
+		wantLength int
+	}{
+		{name: "preserve default", query: "", wantMode: "preserve", wantLength: 1},
+		{name: "clear selected", query: "?mode=clear-result-metadata", wantMode: "clear-result-metadata", wantLength: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "https://device-loc.lab.example.test/clls/wloc"+tc.query, bytes.NewReader(frame))
+			req.Host = "device-loc.lab.example.test"
+			rr := httptest.NewRecorder()
+			srv.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
+			}
+			if got := rr.Header().Get("X-Shift-My-WLOC-Mode"); got != tc.wantMode {
+				t.Fatalf("mode=%q", got)
+			}
+			body := rr.Body.Bytes()
+			if len(body) < 10 {
+				t.Fatalf("short response: %x", body)
+			}
+			gotPayload := body[10:]
+			field3 := []byte{0x18, 0x07}
+			if tc.wantLength == 1 && !bytes.Contains(gotPayload, field3) {
+				t.Fatalf("preserve mode lost field 3: %x", gotPayload)
+			}
+			if tc.wantLength == 0 && bytes.Contains(gotPayload, field3) {
+				t.Fatalf("clear mode retained field 3: %x", gotPayload)
+			}
+		})
+	}
+}
+
+func TestControlledWLOCRejectsUnknownMode(t *testing.T) {
+	srv, _ := testServer(t)
+	body, err := hex.DecodeString(capturedLegacyWLOCRequestHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "https://device-loc.lab.example.test/clls/wloc?mode=bogus", bytes.NewReader(body))
+	req.Host = "device-loc.lab.example.test"
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
+	}
+}
+
+func appendBytesFieldForProxyTest(dst []byte, field int, value []byte) []byte {
+	dst = appendUvarintForProxyTest(dst, uint64(field<<3|2))
+	dst = appendUvarintForProxyTest(dst, uint64(len(value)))
+	return append(dst, value...)
+}
+
+func appendVarintFieldForProxyTest(dst []byte, field int, value int64) []byte {
+	dst = appendUvarintForProxyTest(dst, uint64(field<<3))
+	return appendUvarintForProxyTest(dst, uint64(value))
+}
+
+func appendUvarintForProxyTest(dst []byte, value uint64) []byte {
+	var buf [10]byte
+	n := binary.PutUvarint(buf[:], value)
+	return append(dst, buf[:n]...)
 }
