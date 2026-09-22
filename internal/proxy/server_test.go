@@ -310,3 +310,46 @@ func appendUvarintForProxyTest(dst []byte, value uint64) []byte {
 	n := binary.PutUvarint(buf[:], value)
 	return append(dst, buf[:n]...)
 }
+
+func TestControlledWLOCCoordinatesOnlyModePreservesExistingMetadata(t *testing.T) {
+	srv, _ := testServer(t)
+
+	location := appendVarintFieldForProxyTest(nil, 1, 111)
+	location = appendVarintFieldForProxyTest(location, 2, 222)
+	location = appendVarintFieldForProxyTest(location, 3, 88)
+	location = appendVarintFieldForProxyTest(location, 5, 777)
+	wifi := appendBytesFieldForProxyTest(nil, 1, []byte("aa:bb:cc:dd:ee:01"))
+	wifi = appendBytesFieldForProxyTest(wifi, 2, location)
+	payload := appendBytesFieldForProxyTest(nil, 2, wifi)
+
+	frame := make([]byte, 10, 10+len(payload))
+	binary.BigEndian.PutUint16(frame[0:2], 1)
+	binary.BigEndian.PutUint32(frame[2:6], 1)
+	binary.BigEndian.PutUint32(frame[6:10], uint32(len(payload)))
+	frame = append(frame, payload...)
+
+	req := httptest.NewRequest(http.MethodPost, "https://device-loc.lab.example.test/clls/wloc?mode=coords-only", bytes.NewReader(frame))
+	req.Host = "device-loc.lab.example.test"
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("X-Shift-My-WLOC-Mode"); got != "coords-only" {
+		t.Fatalf("mode=%q", got)
+	}
+	_, _, devices, err := wloc.ParseResponse(rr.Body.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("devices=%+v", devices)
+	}
+	got := devices[0]
+	if got.HorizontalAccuracy != 88 || got.Altitude != 777 {
+		t.Fatalf("coords-only mode changed existing metadata: %+v", got)
+	}
+	if got.UnknownValue4 != 0 || got.VerticalAccuracy != 0 || got.MotionActivityType != 0 || got.MotionActivityConfidence != 0 {
+		t.Fatalf("coords-only mode injected unrelated metadata: %+v", got)
+	}
+}
