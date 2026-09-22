@@ -24,6 +24,7 @@ func TestLoadAcceptsValidIPv6AndAdminPassword(t *testing.T) {
 	t.Setenv("SHIFT_MY_PUBLIC_HOST", "test.example.com")
 	t.Setenv("SHIFT_MY_PUBLIC_IP", "2001:db8::10")
 	t.Setenv("SHIFT_MY_ADMIN_PASSWORD", "secret-password")
+	t.Setenv("SHIFT_MY_LAB_ALIAS", "2600-1900-4040-41b3--.sslip.io")
 	t.Setenv("SHIFT_MY_DB_PATH", t.TempDir()+"/test.db")
 	t.Setenv("SHIFT_MY_CA_CERT", "/tmp/ca.pem")
 	t.Setenv("SHIFT_MY_CA_KEY", "/tmp/ca-key.pem")
@@ -33,6 +34,7 @@ func TestLoadAcceptsValidIPv6AndAdminPassword(t *testing.T) {
 	cfg, err := Load()
 	if err != nil { t.Fatal(err) }
 	if cfg.PublicHost != "test.example.com" { t.Fatalf("host=%q", cfg.PublicHost) }
+	if cfg.LabAlias != "2600-1900-4040-41b3--.sslip.io" { t.Fatalf("lab alias=%q", cfg.LabAlias) }
 	if got := cfg.PublicIP.String(); got != "2001:db8::10" { t.Fatalf("public IP=%q", got) }
 	if cfg.AdminPassword != "secret-password" { t.Fatal("admin password was not loaded") }
 }
