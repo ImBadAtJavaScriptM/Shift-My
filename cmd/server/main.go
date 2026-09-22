@@ -64,7 +64,7 @@ func run() error {
 		return err
 	}
 
-	policy, err := netpolicy.NewControlled(cfg.PublicHost)
+	policy, err := netpolicy.NewControlled(cfg.PublicHost, cfg.LabAlias)
 	if err != nil {
 		return err
 	}
