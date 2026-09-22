@@ -244,3 +244,80 @@ func TestParsedRequestRetainsOriginalPayloadForRewrite(t *testing.T) {
 		t.Fatalf("BSSID was not preserved: %x", response[10:])
 	}
 }
+
+func TestClearResultMetadataVariant(t *testing.T) {
+	oldLocation := appendVarintField(nil, 1, 111)
+	oldLocation = appendVarintField(oldLocation, 2, 222)
+
+	wifi := appendBytesField(nil, 1, []byte("aa:bb:cc:dd:ee:01"))
+	wifi = appendBytesField(wifi, 2, oldLocation)
+
+	numCell := appendVarintField(nil, 3, 7)
+	numWifi := appendVarintField(nil, 4, -1)
+	appBundle := appendBytesField(nil, 5, []byte("com.example.fixture"))
+	deviceType := appendBytesField(nil, 33, appendBytesField(nil, 1, []byte("N104AP")))
+	unknown31 := appendVarintField(nil, 31, 1)
+
+	payload := appendBytesField(nil, 2, wifi)
+	payload = append(payload, numCell...)
+	payload = append(payload, numWifi...)
+	payload = append(payload, appBundle...)
+	payload = append(payload, deviceType...)
+	payload = append(payload, unknown31...)
+
+	req := Request{
+		Version:    1,
+		FunctionID: 1,
+		BSSIDs:     []string{"aa:bb:cc:dd:ee:01"},
+		Payload:    payload,
+	}
+
+	preserve, err := BuildResponse(req, 34.0094, -118.4973)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := BuildResponseClearingResultMetadata(req, 34.0094, -118.4973)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, field := range map[string][]byte{
+		"num cell results": numCell,
+		"num wifi results": numWifi,
+		"device type": deviceType,
+	} {
+		if !bytes.Contains(preserve[10:], field) {
+			t.Fatalf("preserve variant lost %s: %x", name, preserve)
+		}
+		if bytes.Contains(cleared[10:], field) {
+			t.Fatalf("clear variant retained %s: %x", name, cleared)
+		}
+	}
+	for name, field := range map[string][]byte{
+		"app bundle": appBundle,
+		"unknown field 31": unknown31,
+	} {
+		if !bytes.Contains(preserve[10:], field) || !bytes.Contains(cleared[10:], field) {
+			t.Fatalf("%s was not preserved in both variants", name)
+		}
+	}
+
+	_, _, preserveDevices, err := ParseResponse(preserve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, clearDevices, err := ParseResponse(cleared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preserveDevices) != 1 || len(clearDevices) != 1 {
+		t.Fatalf("preserve=%+v clear=%+v", preserveDevices, clearDevices)
+	}
+	if preserveDevices[0].LatitudeE8 != clearDevices[0].LatitudeE8 ||
+		preserveDevices[0].LongitudeE8 != clearDevices[0].LongitudeE8 {
+		t.Fatalf("location changed between variants: preserve=%+v clear=%+v", preserveDevices[0], clearDevices[0])
+	}
+
+	t.Logf("preserve_bytes=%d preserve_hex=%x", len(preserve), preserve)
+	t.Logf("cleared_bytes=%d cleared_hex=%x", len(cleared), cleared)
+}
