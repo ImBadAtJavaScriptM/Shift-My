@@ -3,8 +3,8 @@ package wloc
 import (
 	"bytes"
 	"encoding/hex"
-	"slices"
 	"math"
+	"slices"
 	"testing"
 )
 
@@ -513,4 +513,137 @@ func maskLocationCoordinatesForTest(payload []byte) ([]byte, error) {
 		out = appendBytesField(out, 2, wifi)
 	}
 	return out, nil
+}
+
+func TestRealisticMultiBSSIDSeparatesOpaqueTopLevelReference(t *testing.T) {
+	data, err := hex.DecodeString(realisticMultiBSSIDRequestHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := ParseRequest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.BSSIDs) != 3 {
+		t.Fatalf("wifi device bssids=%v", req.BSSIDs)
+	}
+	if len(req.TopLevelBSSIDs) != 1 || req.TopLevelBSSIDs[0] != "7a:d5:9d:58:e9:9d" {
+		t.Fatalf("top-level bssid-like values=%v", req.TopLevelBSSIDs)
+	}
+	for _, bssid := range req.BSSIDs {
+		if bssid == req.TopLevelBSSIDs[0] {
+			t.Fatalf("top-level opaque value was conflated with WifiDevice BSSID: %v", req)
+		}
+	}
+}
+
+func TestCoordinatesOnlyPreservesMetadataAndOpaqueTopLevelFields(t *testing.T) {
+	location := appendVarintField(nil, 1, 111)
+	location = appendVarintField(location, 2, 222)
+	location = appendVarintField(location, 3, 88)
+	location = appendVarintField(location, 4, 9)
+	location = appendVarintField(location, 5, 777)
+	location = appendVarintField(location, 6, 555)
+	location = appendVarintField(location, 9, 123456789)
+	location = appendVarintField(location, 11, 17)
+	location = appendVarintField(location, 12, 23)
+	location = appendVarintField(location, 29, 44)
+
+	wifi := appendBytesField(nil, 1, []byte("aa:bb:cc:dd:ee:01"))
+	wifi = appendBytesField(wifi, 2, location)
+	topLevelReference := appendBytesField(nil, 1, []byte("7a:d5:9d:58:e9:9d"))
+	field31 := appendVarintField(nil, 31, 1)
+	field32 := appendVarintField(nil, 32, 2)
+
+	payload := append([]byte(nil), topLevelReference...)
+	payload = appendBytesField(payload, 2, wifi)
+	payload = append(payload, field31...)
+	payload = append(payload, field32...)
+
+	req := Request{
+		Version:        1,
+		FunctionID:     1,
+		BSSIDs:         []string{"aa:bb:cc:dd:ee:01"},
+		TopLevelBSSIDs: []string{"7a:d5:9d:58:e9:9d"},
+		Payload:        payload,
+	}
+
+	response, err := BuildResponseCoordinatesOnly(req, 34.0094, -118.4973)
+	if err != nil {
+		t.Fatal(err)
+	}
+	responsePayload := response[10:]
+	for name, raw := range map[string][]byte{
+		"top-level field 1": topLevelReference,
+		"top-level field 31": field31,
+		"top-level field 32": field32,
+		"horizontal accuracy 88": appendVarintField(nil, 3, 88),
+		"field 4 value 9": appendVarintField(nil, 4, 9),
+		"altitude 777": appendVarintField(nil, 5, 777),
+		"vertical accuracy 555": appendVarintField(nil, 6, 555),
+		"timestamp 123456789": appendVarintField(nil, 9, 123456789),
+		"motion type 17": appendVarintField(nil, 11, 17),
+		"motion confidence 23": appendVarintField(nil, 12, 23),
+		"location field 29 value 44": appendVarintField(nil, 29, 44),
+	} {
+		if !bytes.Contains(responsePayload, raw) {
+			t.Fatalf("%s was not preserved: %x", name, responsePayload)
+		}
+	}
+
+	_, _, devices, err := ParseResponse(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("devices=%+v", devices)
+	}
+	got := devices[0]
+	if got.LatitudeE8 != int64(math.Trunc(34.0094*1e8)) ||
+		got.LongitudeE8 != int64(math.Trunc(-118.4973*1e8)) {
+		t.Fatalf("location=%+v", got)
+	}
+	if got.HorizontalAccuracy != 88 ||
+		got.UnknownValue4 != 9 ||
+		got.Altitude != 777 ||
+		got.VerticalAccuracy != 555 ||
+		got.MotionActivityType != 17 ||
+		got.MotionActivityConfidence != 23 {
+		t.Fatalf("metadata was changed: %+v", got)
+	}
+}
+
+func TestCoordinatesOnlyAddsMinimalLocationWhenMissing(t *testing.T) {
+	wifi := appendBytesField(nil, 1, []byte("aa:bb:cc:dd:ee:01"))
+	wifiUnknown := appendVarintField(nil, 7, 9)
+	wifi = append(wifi, wifiUnknown...)
+	payload := appendBytesField(nil, 2, wifi)
+
+	req := Request{
+		Version:    1,
+		FunctionID: 1,
+		BSSIDs:     []string{"aa:bb:cc:dd:ee:01"},
+		Payload:    payload,
+	}
+	response, err := BuildResponseCoordinatesOnly(req, 1.000000004, -2.000000004)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, devices, err := ParseResponse(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("devices=%+v", devices)
+	}
+	got := devices[0]
+	if got.LatitudeE8 != 100000000 || got.LongitudeE8 != -200000000 {
+		t.Fatalf("coordinates=%+v", got)
+	}
+	if got.HorizontalAccuracy != 0 || got.Altitude != 0 || got.MotionActivityType != 0 {
+		t.Fatalf("minimal location unexpectedly injected metadata: %+v", got)
+	}
+	if !bytes.Contains(response[10:], wifiUnknown) {
+		t.Fatalf("wifi unknown field was not preserved: %x", response[10:])
+	}
 }
