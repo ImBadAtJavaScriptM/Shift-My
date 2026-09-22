@@ -107,6 +107,14 @@ func TestBuildResponseUsesSelectedTargetForEveryRequestedBSSID(t *testing.T) {
 		if device.BSSID != req.BSSIDs[i] || device.LatitudeE8 != wantLat || device.LongitudeE8 != wantLon {
 			t.Fatalf("device[%d]=%+v", i, device)
 		}
+		if device.HorizontalAccuracy != defaultHorizontalAccuracy ||
+			device.UnknownValue4 != defaultUnknownValue4 ||
+			device.Altitude != defaultAltitude ||
+			device.VerticalAccuracy != defaultVerticalAccuracy ||
+			device.MotionActivityType != defaultMotionActivityType ||
+			device.MotionActivityConfidence != defaultMotionActivityConfidence {
+			t.Fatalf("device[%d] metadata=%+v", i, device)
+		}
 	}
 }
 
@@ -125,5 +133,29 @@ func TestParseRequestRejectsTruncatedPayload(t *testing.T) {
 	}
 	if _, err := ParseRequest(data[:len(data)-1]); err == nil {
 		t.Fatal("expected truncated compact request rejection")
+	}
+}
+
+func TestRichResponseContainsReferenceMetadataFields(t *testing.T) {
+	req := Request{Version: 1, FunctionID: 1, BSSIDs: []string{"34:DB:FD:43:E3:A1"}}
+	data, err := BuildResponse(req, 34.0094, -118.4973)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, devices, err := ParseResponse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("devices=%+v", devices)
+	}
+	got := devices[0]
+	if got.HorizontalAccuracy != 39 ||
+		got.UnknownValue4 != 3 ||
+		got.Altitude != 530 ||
+		got.VerticalAccuracy != 1000 ||
+		got.MotionActivityType != 63 ||
+		got.MotionActivityConfidence != 467 {
+		t.Fatalf("metadata=%+v", got)
 	}
 }
