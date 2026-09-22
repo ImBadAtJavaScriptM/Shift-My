@@ -63,7 +63,7 @@ func TestParseModernStructuredARPCRequest(t *testing.T) {
 	if req.Locale != "en-001_001" || req.AppIdentifier != "com.apple.locationd" || req.OSVersion != "18.6.2.22G100" {
 		t.Fatalf("envelope=%+v", req)
 	}
-	if len(req.BSSIDs) != 1 || req.BSSIDs[0] != "34:DB:FD:43:E3:A1" {
+	if len(req.BSSIDs) != 1 || req.BSSIDs[0] != "42:DB:FD:43:E3:A1" {
 		t.Fatalf("bssids=%v", req.BSSIDs)
 	}
 }
