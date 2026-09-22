@@ -353,3 +353,21 @@ func TestControlledWLOCCoordinatesOnlyModePreservesExistingMetadata(t *testing.T
 		t.Fatalf("coords-only mode injected unrelated metadata: %+v", got)
 	}
 }
+
+func TestShortControlledWLOCPathDefaultsToCoordsOnly(t *testing.T) {
+	srv, _ := testServer(t)
+	body, err := hex.DecodeString(capturedLegacyWLOCRequestHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "https://device-loc.lab.example.test/w", bytes.NewReader(body))
+	req.Host = "device-loc.lab.example.test"
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("X-Shift-My-WLOC-Mode"); got != "coords-only" {
+		t.Fatalf("mode=%q", got)
+	}
+}
