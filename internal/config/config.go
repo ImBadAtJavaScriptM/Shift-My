@@ -9,6 +9,7 @@ import (
 
 type Config struct {
 	PublicHost     string
+	LabAlias       string
 	PublicIP       net.IP
 	AdminPassword  string
 	DBPath         string
@@ -35,6 +36,7 @@ func Load() (Config, error) {
 	}
 	return Config{
 		PublicHost:     host,
+		LabAlias:       os.Getenv("SHIFT_MY_LAB_ALIAS"),
 		PublicIP:       append(net.IP(nil), ip...),
 		AdminPassword:  adminPassword,
 		DBPath:         envDefault("SHIFT_MY_DB_PATH", "./shift-my.db"),
