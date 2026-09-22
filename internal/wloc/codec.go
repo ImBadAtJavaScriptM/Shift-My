@@ -29,6 +29,7 @@ type Request struct {
 	FunctionID    uint32
 	Envelope      string
 	BSSIDs        []string
+	TopLevelBSSIDs []string
 	Payload       []byte
 }
 
@@ -56,15 +57,27 @@ func ParseRequest(data []byte) (Request, error) {
 				FunctionID: binary.BigEndian.Uint32(data[2:6]),
 				Envelope:   "compact-response-style",
 			}
-			bssids, err := parseAppleWLocBSSIDs(data[10:])
+			payload := data[10:]
+			bssids, err := parseAppleWLocWifiBSSIDs(payload)
 			if err != nil {
 				return Request{}, err
+			}
+			topLevel, err := parseTopLevelBSSIDLikeValues(payload)
+			if err != nil {
+				return Request{}, err
+			}
+			// Compact response-style lab fixtures can contain only the top-level
+			// BSSID-like field. Keep accepting that shape without conflating it
+			// with actual WifiDevice entries in structured requests.
+			if len(bssids) == 0 {
+				bssids = append([]string(nil), topLevel...)
 			}
 			if len(bssids) == 0 {
 				return Request{}, errors.New("request contains no wifi devices")
 			}
 			req.BSSIDs = bssids
-			req.Payload = append([]byte(nil), data[10:]...)
+			req.TopLevelBSSIDs = topLevel
+			req.Payload = append([]byte(nil), payload...)
 			return req, nil
 		}
 	}
@@ -93,7 +106,11 @@ func ParseRequest(data []byte) (Request, error) {
 		return Request{}, fmt.Errorf("payload length %d does not match %d remaining bytes", payloadLen, len(data)-pos)
 	}
 	payload := data[pos:]
-	req.BSSIDs, err = parseAppleWLocBSSIDs(payload)
+	req.BSSIDs, err = parseAppleWLocWifiBSSIDs(payload)
+	if err != nil {
+		return Request{}, err
+	}
+	req.TopLevelBSSIDs, err = parseTopLevelBSSIDLikeValues(payload)
 	if err != nil {
 		return Request{}, err
 	}
@@ -113,6 +130,45 @@ func BuildResponse(req Request, latitude, longitude float64) ([]byte, error) {
 // (33) are omitted after the WifiDevice locations are replaced.
 func BuildResponseClearingResultMetadata(req Request, latitude, longitude float64) ([]byte, error) {
 	return buildResponse(req, latitude, longitude, true)
+}
+
+// BuildResponseCoordinatesOnly mirrors the modern raw-wire strategy used by
+// current public implementations: only latitude/longitude are replaced.
+// Existing accuracy, altitude, motion, and unknown fields stay byte-for-byte.
+// If a WifiDevice has no Location, a minimal lat/lon Location is appended.
+func BuildResponseCoordinatesOnly(req Request, latitude, longitude float64) ([]byte, error) {
+	if latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 {
+		return nil, errors.New("coordinates out of range")
+	}
+	if len(req.BSSIDs) == 0 {
+		return nil, errors.New("at least one BSSID is required")
+	}
+	latE8 := int64(math.Trunc(latitude * 1e8))
+	lonE8 := int64(math.Trunc(longitude * 1e8))
+
+	var payload []byte
+	if len(req.Payload) > 0 {
+		rewritten, count, err := rewriteAppleWLocCoordsOnly(req.Payload, latE8, lonE8)
+		if err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			payload = rewritten
+		}
+	}
+	if payload == nil {
+		var err error
+		payload, err = buildFreshPayloadCoordsOnly(req.BSSIDs, latE8, lonE8)
+		if err != nil {
+			return nil, err
+		}
+	}
+	frame := make([]byte, 10, 10+len(payload))
+	binary.BigEndian.PutUint16(frame[0:2], req.Version)
+	binary.BigEndian.PutUint32(frame[2:6], req.FunctionID)
+	binary.BigEndian.PutUint32(frame[6:10], uint32(len(payload)))
+	frame = append(frame, payload...)
+	return frame, nil
 }
 
 func buildResponse(req Request, latitude, longitude float64, clearResultMetadata bool) ([]byte, error) {
@@ -157,6 +213,107 @@ func buildResponse(req Request, latitude, longitude float64, clearResultMetadata
 	return frame, nil
 }
 
+
+func buildFreshPayloadCoordsOnly(bssids []string, latE8, lonE8 int64) ([]byte, error) {
+	payload := make([]byte, 0, len(bssids)*48)
+	for _, bssid := range bssids {
+		if bssid == "" {
+			return nil, errors.New("empty BSSID")
+		}
+		location := appendVarintField(nil, 1, latE8)
+		location = appendVarintField(location, 2, lonE8)
+		wifi := appendBytesField(nil, 1, []byte(bssid))
+		wifi = appendBytesField(wifi, 2, location)
+		payload = appendBytesField(payload, 2, wifi)
+	}
+	return payload, nil
+}
+
+func rewriteAppleWLocCoordsOnly(payload []byte, latE8, lonE8 int64) ([]byte, int, error) {
+	out := make([]byte, 0, len(payload)+32)
+	rewritten := 0
+	for pos := 0; pos < len(payload); {
+		start := pos
+		field, wire, value, next, err := nextField(payload, pos)
+		if err != nil {
+			return nil, 0, fmt.Errorf("apple wloc protobuf: %w", err)
+		}
+		pos = next
+		if field == 2 && wire == 2 {
+			wifi, changed, err := rewriteWifiDeviceCoordsOnly(value, latE8, lonE8)
+			if err != nil {
+				return nil, 0, err
+			}
+			out = appendBytesField(out, 2, wifi)
+			if changed {
+				rewritten++
+			}
+			continue
+		}
+		out = append(out, payload[start:next]...)
+	}
+	return out, rewritten, nil
+}
+
+func rewriteWifiDeviceCoordsOnly(data []byte, latE8, lonE8 int64) ([]byte, bool, error) {
+	out := make([]byte, 0, len(data)+24)
+	locationSeen := false
+	for pos := 0; pos < len(data); {
+		start := pos
+		field, wire, value, next, err := nextField(data, pos)
+		if err != nil {
+			return nil, false, fmt.Errorf("wifi device protobuf: %w", err)
+		}
+		pos = next
+		if field == 2 && wire == 2 {
+			locationSeen = true
+			location, err := rewriteLocationCoordsOnly(value, latE8, lonE8)
+			if err != nil {
+				return nil, false, err
+			}
+			out = appendBytesField(out, 2, location)
+			continue
+		}
+		out = append(out, data[start:next]...)
+	}
+	if !locationSeen {
+		location := appendVarintField(nil, 1, latE8)
+		location = appendVarintField(location, 2, lonE8)
+		out = appendBytesField(out, 2, location)
+	}
+	return out, true, nil
+}
+
+func rewriteLocationCoordsOnly(data []byte, latE8, lonE8 int64) ([]byte, error) {
+	out := make([]byte, 0, len(data)+20)
+	latSeen := false
+	lonSeen := false
+	for pos := 0; pos < len(data); {
+		start := pos
+		field, wire, _, next, err := nextField(data, pos)
+		if err != nil {
+			return nil, fmt.Errorf("location protobuf: %w", err)
+		}
+		pos = next
+		switch {
+		case field == 1 && wire == 0:
+			out = appendVarintField(out, 1, latE8)
+			latSeen = true
+		case field == 2 && wire == 0:
+			out = appendVarintField(out, 2, lonE8)
+			lonSeen = true
+		default:
+			out = append(out, data[start:next]...)
+		}
+	}
+	if !latSeen {
+		out = appendVarintField(out, 1, latE8)
+	}
+	if !lonSeen {
+		out = appendVarintField(out, 2, lonE8)
+	}
+	return out, nil
+}
 
 func clearTopLevelResultMetadata(payload []byte) ([]byte, error) {
 	out := make([]byte, 0, len(payload))
@@ -287,38 +444,48 @@ func readBEString(data []byte, pos *int) (string, error) {
 	return value, nil
 }
 
-func parseAppleWLocBSSIDs(payload []byte) ([]string, error) {
+func parseAppleWLocWifiBSSIDs(payload []byte) ([]string, error) {
 	var bssids []string
 	seen := map[string]struct{}{}
-	add := func(value string) {
-		if !looksLikeBSSID(value) {
-			return
-		}
-		key := strings.ToLower(value)
-		if _, ok := seen[key]; ok {
-			return
-		}
-		seen[key] = struct{}{}
-		bssids = append(bssids, value)
-	}
 	for pos := 0; pos < len(payload); {
 		field, wire, value, next, err := nextField(payload, pos)
 		if err != nil {
 			return nil, fmt.Errorf("apple wloc protobuf: %w", err)
 		}
 		pos = next
-		switch {
-		case field == 1 && wire == 2:
-			add(string(value))
-		case field == 2 && wire == 2:
-			bssid, err := parseWifiDeviceBSSID(value)
-			if err != nil {
-				return nil, err
-			}
-			add(bssid)
+		if field != 2 || wire != 2 {
+			continue
 		}
+		bssid, err := parseWifiDeviceBSSID(value)
+		if err != nil {
+			return nil, err
+		}
+		if !looksLikeBSSID(bssid) {
+			continue
+		}
+		key := strings.ToLower(bssid)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		bssids = append(bssids, bssid)
 	}
 	return bssids, nil
+}
+
+func parseTopLevelBSSIDLikeValues(payload []byte) ([]string, error) {
+	var values []string
+	for pos := 0; pos < len(payload); {
+		field, wire, value, next, err := nextField(payload, pos)
+		if err != nil {
+			return nil, fmt.Errorf("apple wloc protobuf: %w", err)
+		}
+		pos = next
+		if field == 1 && wire == 2 && looksLikeBSSID(string(value)) {
+			values = append(values, string(value))
+		}
+	}
+	return values, nil
 }
 
 func looksLikeBSSID(value string) bool {
