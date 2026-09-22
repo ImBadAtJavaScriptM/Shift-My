@@ -14,19 +14,31 @@ import (
 	"time"
 )
 
-const (
-	appleWLOCURL = "https://gs-loc.apple.com/clls/wloc"
-	userAgent    = "locationd/1753.17 CFNetwork/889.9 Darwin/17.2.0"
+const userAgent = "locationd/1753.17 CFNetwork/889.9 Darwin/17.2.0"
+
+var (
+	bssidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{2}(:[0-9a-f]{2}){5}$`)
+	allowedEndpoints = map[string]struct{}{
+		"https://gs-loc.apple.com/clls/wloc":          {},
+		"https://gs-loc-cn.apple.com/clls/wloc":       {},
+		"https://iphone-services.apple.com/clls/wloc": {},
+	}
 )
 
-var bssidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{2}(:[0-9a-f]{2}){5}$`)
-
 func main() {
+	endpoint := flag.String("endpoint", "https://gs-loc.apple.com/clls/wloc", "Apple WLOC endpoint")
 	bssid := flag.String("bssid", "34:DB:FD:43:E3:A1", "BSSID to query")
 	out := flag.String("out", "apple-wloc-response.bin", "file for the raw Apple response")
 	timeout := flag.Duration("timeout", 20*time.Second, "HTTP timeout")
 	flag.Parse()
 
+	if _, ok := allowedEndpoints[*endpoint]; !ok {
+		fmt.Fprintln(os.Stderr, "endpoint not allowed; use one of:")
+		for candidate := range allowedEndpoints {
+			fmt.Fprintln(os.Stderr, " ", candidate)
+		}
+		os.Exit(2)
+	}
 	if !bssidPattern.MatchString(*bssid) {
 		fmt.Fprintln(os.Stderr, "invalid BSSID; expected XX:XX:XX:XX:XX:XX")
 		os.Exit(2)
@@ -37,7 +49,7 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, appleWLOCURL, bytes.NewReader(requestBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, *endpoint, bytes.NewReader(requestBody))
 	if err != nil {
 		fatal(err)
 	}
@@ -59,7 +71,7 @@ func main() {
 	}
 	respHash := sha256.Sum256(body)
 
-	fmt.Printf("endpoint: %s\n", appleWLOCURL)
+	fmt.Printf("endpoint: %s\n", *endpoint)
 	fmt.Printf("bssid: %s\n", *bssid)
 	fmt.Printf("request_bytes: %d\n", len(requestBody))
 	fmt.Printf("request_sha256: %x\n", reqHash)
