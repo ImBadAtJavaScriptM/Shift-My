@@ -29,6 +29,7 @@ type Request struct {
 	FunctionID    uint32
 	Envelope      string
 	BSSIDs        []string
+	Payload       []byte
 }
 
 type DeviceLocation struct {
@@ -63,6 +64,7 @@ func ParseRequest(data []byte) (Request, error) {
 				return Request{}, errors.New("request contains no wifi devices")
 			}
 			req.BSSIDs = bssids
+			req.Payload = append([]byte(nil), data[10:]...)
 			return req, nil
 		}
 	}
@@ -90,13 +92,15 @@ func ParseRequest(data []byte) (Request, error) {
 	if payloadLen != len(data)-pos {
 		return Request{}, fmt.Errorf("payload length %d does not match %d remaining bytes", payloadLen, len(data)-pos)
 	}
-	req.BSSIDs, err = parseAppleWLocBSSIDs(data[pos:])
+	payload := data[pos:]
+	req.BSSIDs, err = parseAppleWLocBSSIDs(payload)
 	if err != nil {
 		return Request{}, err
 	}
 	if len(req.BSSIDs) == 0 {
 		return Request{}, errors.New("request contains no wifi devices")
 	}
+	req.Payload = append([]byte(nil), payload...)
 	return req, nil
 }
 
@@ -109,31 +113,110 @@ func BuildResponse(req Request, latitude, longitude float64) ([]byte, error) {
 	}
 	latE8 := int64(math.Round(latitude * 1e8))
 	lonE8 := int64(math.Round(longitude * 1e8))
-	payload := make([]byte, 0, len(req.BSSIDs)*48)
-	for _, bssid := range req.BSSIDs {
-		if bssid == "" {
-			return nil, errors.New("empty BSSID")
+
+	var payload []byte
+	if len(req.Payload) > 0 {
+		rewritten, count, err := rewriteAppleWLocPayload(req.Payload, latE8, lonE8)
+		if err != nil {
+			return nil, err
 		}
-		location := make([]byte, 0, 48)
-		location = appendVarintField(location, 1, latE8)
-		location = appendVarintField(location, 2, lonE8)
-		location = appendVarintField(location, 3, defaultHorizontalAccuracy)
-		location = appendVarintField(location, 4, defaultUnknownValue4)
-		location = appendVarintField(location, 5, defaultAltitude)
-		location = appendVarintField(location, 6, defaultVerticalAccuracy)
-		location = appendVarintField(location, 11, defaultMotionActivityType)
-		location = appendVarintField(location, 12, defaultMotionActivityConfidence)
-		wifi := make([]byte, 0, len(bssid)+len(location)+8)
-		wifi = appendBytesField(wifi, 1, []byte(bssid))
-		wifi = appendBytesField(wifi, 2, location)
-		payload = appendBytesField(payload, 2, wifi)
+		if count > 0 {
+			payload = rewritten
+		}
 	}
+	if payload == nil {
+		var err error
+		payload, err = buildFreshPayload(req.BSSIDs, latE8, lonE8)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	frame := make([]byte, 10, 10+len(payload))
 	binary.BigEndian.PutUint16(frame[0:2], req.Version)
 	binary.BigEndian.PutUint32(frame[2:6], req.FunctionID)
 	binary.BigEndian.PutUint32(frame[6:10], uint32(len(payload)))
 	frame = append(frame, payload...)
 	return frame, nil
+}
+
+func buildFreshPayload(bssids []string, latE8, lonE8 int64) ([]byte, error) {
+	payload := make([]byte, 0, len(bssids)*64)
+	for _, bssid := range bssids {
+		if bssid == "" {
+			return nil, errors.New("empty BSSID")
+		}
+		wifi := appendBytesField(nil, 1, []byte(bssid))
+		wifi = appendBytesField(wifi, 2, buildLocation(latE8, lonE8))
+		payload = appendBytesField(payload, 2, wifi)
+	}
+	return payload, nil
+}
+
+func buildLocation(latE8, lonE8 int64) []byte {
+	location := make([]byte, 0, 48)
+	location = appendVarintField(location, 1, latE8)
+	location = appendVarintField(location, 2, lonE8)
+	location = appendVarintField(location, 3, defaultHorizontalAccuracy)
+	location = appendVarintField(location, 4, defaultUnknownValue4)
+	location = appendVarintField(location, 5, defaultAltitude)
+	location = appendVarintField(location, 6, defaultVerticalAccuracy)
+	location = appendVarintField(location, 11, defaultMotionActivityType)
+	location = appendVarintField(location, 12, defaultMotionActivityConfidence)
+	return location
+}
+
+// rewriteAppleWLocPayload preserves every top-level field byte-for-byte except
+// WifiDevice field 2 messages, whose nested location field is replaced.
+func rewriteAppleWLocPayload(payload []byte, latE8, lonE8 int64) ([]byte, int, error) {
+	out := make([]byte, 0, len(payload)+64)
+	rewritten := 0
+	for pos := 0; pos < len(payload); {
+		start := pos
+		field, wire, value, next, err := nextField(payload, pos)
+		if err != nil {
+			return nil, 0, fmt.Errorf("apple wloc protobuf: %w", err)
+		}
+		pos = next
+		if field == 2 && wire == 2 {
+			wifi, err := rewriteWifiDevice(value, latE8, lonE8)
+			if err != nil {
+				return nil, 0, err
+			}
+			out = appendBytesField(out, 2, wifi)
+			rewritten++
+			continue
+		}
+		out = append(out, payload[start:next]...)
+	}
+	return out, rewritten, nil
+}
+
+// rewriteWifiDevice preserves the BSSID and every unknown/nested field exactly,
+// replacing any existing location block with the controlled lab location.
+func rewriteWifiDevice(data []byte, latE8, lonE8 int64) ([]byte, error) {
+	out := make([]byte, 0, len(data)+48)
+	locationAdded := false
+	for pos := 0; pos < len(data); {
+		start := pos
+		field, wire, _, next, err := nextField(data, pos)
+		if err != nil {
+			return nil, fmt.Errorf("wifi device protobuf: %w", err)
+		}
+		pos = next
+		if field == 2 && wire == 2 {
+			if !locationAdded {
+				out = appendBytesField(out, 2, buildLocation(latE8, lonE8))
+				locationAdded = true
+			}
+			continue
+		}
+		out = append(out, data[start:next]...)
+	}
+	if !locationAdded {
+		out = appendBytesField(out, 2, buildLocation(latE8, lonE8))
+	}
+	return out, nil
 }
 
 func ParseResponse(data []byte) (uint16, uint32, []DeviceLocation, error) {
