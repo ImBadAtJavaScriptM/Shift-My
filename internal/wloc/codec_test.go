@@ -3,6 +3,7 @@ package wloc
 import (
 	"bytes"
 	"encoding/hex"
+	"slices"
 	"math"
 	"testing"
 )
@@ -369,4 +370,147 @@ func TestRealisticMultiBSSIDFixtureModesAreIdenticalWhenResultMetadataAbsent(t *
 			t.Fatalf("%s was not preserved", name)
 		}
 	}
+}
+
+func TestRealisticMultiBSSIDRewriteChangesOnlyCoordinates(t *testing.T) {
+	data, err := hex.DecodeString(realisticMultiBSSIDRequestHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := ParseRequest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := BuildResponse(req, 34.0094, -118.4973)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response) != len(data) {
+		t.Fatalf("response length=%d request length=%d", len(response), len(data))
+	}
+
+	originalMasked, err := maskLocationCoordinatesForTest(data[10:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	responseMasked, err := maskLocationCoordinatesForTest(response[10:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(originalMasked, responseMasked) {
+		t.Fatalf("non-coordinate bytes changed\noriginal=%x\nresponse=%x", originalMasked, responseMasked)
+	}
+
+	_, _, devices, err := ParseResponse(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, device := range devices {
+		if device.HorizontalAccuracy != 39 ||
+			device.UnknownValue4 != 3 ||
+			device.Altitude != 530 ||
+			device.VerticalAccuracy != 1000 ||
+			device.MotionActivityType != 63 ||
+			device.MotionActivityConfidence != 467 {
+			t.Fatalf("device[%d] metadata=%+v", i, device)
+		}
+	}
+}
+
+func TestRealisticCapturedLocationFieldSet(t *testing.T) {
+	data, err := hex.DecodeString(realisticMultiBSSIDRequestHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := data[10:]
+	wantFields := []int{1, 2, 3, 4, 5, 6, 11, 12}
+	seenWifi := 0
+	for pos := 0; pos < len(payload); {
+		field, wire, value, next, err := nextField(payload, pos)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pos = next
+		if field != 2 || wire != 2 {
+			continue
+		}
+		seenWifi++
+		var location []byte
+		for wpos := 0; wpos < len(value); {
+			wf, ww, wv, wnext, err := nextField(value, wpos)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wpos = wnext
+			if wf == 2 && ww == 2 {
+				location = wv
+			}
+		}
+		if location == nil {
+			t.Fatalf("wifi device %d missing location", seenWifi)
+		}
+		var got []int
+		for lpos := 0; lpos < len(location); {
+			lf, _, _, lnext, err := nextField(location, lpos)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lpos = lnext
+			got = append(got, lf)
+		}
+		if !slices.Equal(got, wantFields) {
+			t.Fatalf("wifi device %d fields=%v want=%v", seenWifi, got, wantFields)
+		}
+	}
+	if seenWifi != 3 {
+		t.Fatalf("wifi devices=%d want=3", seenWifi)
+	}
+}
+
+func maskLocationCoordinatesForTest(payload []byte) ([]byte, error) {
+	out := make([]byte, 0, len(payload))
+	for pos := 0; pos < len(payload); {
+		start := pos
+		field, wire, value, next, err := nextField(payload, pos)
+		if err != nil {
+			return nil, err
+		}
+		pos = next
+		if field != 2 || wire != 2 {
+			out = append(out, payload[start:next]...)
+			continue
+		}
+
+		wifi := make([]byte, 0, len(value))
+		for wpos := 0; wpos < len(value); {
+			wstart := wpos
+			wf, ww, wv, wnext, err := nextField(value, wpos)
+			if err != nil {
+				return nil, err
+			}
+			wpos = wnext
+			if wf != 2 || ww != 2 {
+				wifi = append(wifi, value[wstart:wnext]...)
+				continue
+			}
+
+			location := make([]byte, 0, len(wv))
+			for lpos := 0; lpos < len(wv); {
+				lstart := lpos
+				lf, lw, _, lnext, err := nextField(wv, lpos)
+				if err != nil {
+					return nil, err
+				}
+				lpos = lnext
+				if (lf == 1 || lf == 2) && lw == 0 {
+					location = appendVarintField(location, lf, 0)
+				} else {
+					location = append(location, wv[lstart:lnext]...)
+				}
+			}
+			wifi = appendBytesField(wifi, 2, location)
+		}
+		out = appendBytesField(out, 2, wifi)
+	}
+	return out, nil
 }
