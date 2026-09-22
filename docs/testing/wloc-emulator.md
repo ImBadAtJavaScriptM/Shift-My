@@ -82,3 +82,29 @@ mode so captures are unambiguous.
 
 These modes are only exposed on the existing project-owned controlled TLS
 hosts.
+
+
+## Opaque root fields and coordinates-only mode
+
+Recent public implementations avoid assigning semantics to several root
+AppleWLoc fields and preserve them byte-for-byte. The realistic multi-BSSID
+fixture used by this lab contains:
+
+- three actual WifiDevice messages in root field 2;
+- one separate BSSID-looking value in root field 1;
+- root varints 31 and 32.
+
+The lab therefore records BSSID-looking root field 1 values separately from
+WifiDevice BSSIDs. They are treated as opaque protocol state, not as an
+additional WifiDevice.
+
+The `mode=coords-only` response mode follows the minimal modern raw-wire
+strategy: it changes only Location fields 1 (latitude) and 2 (longitude) in
+existing WifiDevice locations. Existing horizontal accuracy, altitude,
+motion, timestamp, provider, diagnostic, and unknown fields are preserved
+byte-for-byte. If a WifiDevice has no Location, the mode appends a minimal
+Location containing only latitude and longitude.
+
+This mode does not infer the meaning of root fields 1, 31, or 32 and never
+modifies them. The default remains `mode=preserve` so experiments are
+explicit rather than silently changing baseline behavior.
