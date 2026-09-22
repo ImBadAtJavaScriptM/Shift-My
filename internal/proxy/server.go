@@ -54,7 +54,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "controlled host required", http.StatusMisdirectedRequest)
 		return
 	}
-	if r.Method == http.MethodPost && r.URL.Path == "/clls/wloc" {
+	if r.Method == http.MethodPost && (r.URL.Path == "/clls/wloc" || r.URL.Path == "/w") {
 		s.serveWLOC(w, r, host)
 		return
 	}
@@ -164,7 +164,11 @@ func (s *Server) serveWLOC(w http.ResponseWriter, r *http.Request, host string) 
 	}
 	mode := r.URL.Query().Get("mode")
 	if mode == "" {
-		mode = "preserve"
+		if r.URL.Path == "/w" {
+			mode = "coords-only"
+		} else {
+			mode = "preserve"
+		}
 	}
 
 	var payload []byte
