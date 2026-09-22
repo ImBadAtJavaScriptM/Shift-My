@@ -8,7 +8,18 @@ import (
 	"strings"
 )
 
-const maxStringLength = 1 << 16
+const (
+	maxStringLength = 1 << 16
+
+	// Lab response metadata mirrors the richer fields used by the public
+	// reference spoofer. These are deterministic fixture values, not sensor data.
+	defaultHorizontalAccuracy       int64 = 39
+	defaultUnknownValue4            int64 = 3
+	defaultAltitude                 int64 = 530
+	defaultVerticalAccuracy         int64 = 1000
+	defaultMotionActivityType       int64 = 63
+	defaultMotionActivityConfidence int64 = 467
+)
 
 type Request struct {
 	Version       uint16
@@ -21,9 +32,15 @@ type Request struct {
 }
 
 type DeviceLocation struct {
-	BSSID       string
-	LatitudeE8  int64
-	LongitudeE8 int64
+	BSSID                    string
+	LatitudeE8               int64
+	LongitudeE8              int64
+	HorizontalAccuracy       int64
+	UnknownValue4            int64
+	Altitude                 int64
+	VerticalAccuracy         int64
+	MotionActivityType       int64
+	MotionActivityConfidence int64
 }
 
 func ParseRequest(data []byte) (Request, error) {
@@ -97,9 +114,15 @@ func BuildResponse(req Request, latitude, longitude float64) ([]byte, error) {
 		if bssid == "" {
 			return nil, errors.New("empty BSSID")
 		}
-		location := make([]byte, 0, 24)
+		location := make([]byte, 0, 48)
 		location = appendVarintField(location, 1, latE8)
 		location = appendVarintField(location, 2, lonE8)
+		location = appendVarintField(location, 3, defaultHorizontalAccuracy)
+		location = appendVarintField(location, 4, defaultUnknownValue4)
+		location = appendVarintField(location, 5, defaultAltitude)
+		location = appendVarintField(location, 6, defaultVerticalAccuracy)
+		location = appendVarintField(location, 11, defaultMotionActivityType)
+		location = appendVarintField(location, 12, defaultMotionActivityConfidence)
 		wifi := make([]byte, 0, len(bssid)+len(location)+8)
 		wifi = appendBytesField(wifi, 1, []byte(bssid))
 		wifi = appendBytesField(wifi, 2, location)
@@ -242,38 +265,59 @@ func parseWifiDeviceLocation(data []byte) (DeviceLocation, error) {
 		case field == 1 && wire == 2:
 			device.BSSID = string(value)
 		case field == 2 && wire == 2:
-			lat, lon, err := parseLocation(value)
+			location, err := parseLocation(value)
 			if err != nil {
 				return DeviceLocation{}, err
 			}
-			device.LatitudeE8, device.LongitudeE8 = lat, lon
+			device.LatitudeE8 = location.LatitudeE8
+			device.LongitudeE8 = location.LongitudeE8
+			device.HorizontalAccuracy = location.HorizontalAccuracy
+			device.UnknownValue4 = location.UnknownValue4
+			device.Altitude = location.Altitude
+			device.VerticalAccuracy = location.VerticalAccuracy
+			device.MotionActivityType = location.MotionActivityType
+			device.MotionActivityConfidence = location.MotionActivityConfidence
 		}
 	}
 	return device, nil
 }
 
-func parseLocation(data []byte) (int64, int64, error) {
-	var lat, lon int64
+func parseLocation(data []byte) (DeviceLocation, error) {
+	var location DeviceLocation
 	for pos := 0; pos < len(data); {
 		field, wire, value, next, err := nextField(data, pos)
 		if err != nil {
-			return 0, 0, fmt.Errorf("location protobuf: %w", err)
+			return DeviceLocation{}, fmt.Errorf("location protobuf: %w", err)
 		}
 		pos = next
-		if wire != 0 || (field != 1 && field != 2) {
+		if wire != 0 {
 			continue
 		}
 		u, n := binary.Uvarint(value)
 		if n <= 0 {
-			return 0, 0, errors.New("location varint is invalid")
+			return DeviceLocation{}, errors.New("location varint is invalid")
 		}
-		if field == 1 {
-			lat = int64(u)
-		} else {
-			lon = int64(u)
+		v := int64(u)
+		switch field {
+		case 1:
+			location.LatitudeE8 = v
+		case 2:
+			location.LongitudeE8 = v
+		case 3:
+			location.HorizontalAccuracy = v
+		case 4:
+			location.UnknownValue4 = v
+		case 5:
+			location.Altitude = v
+		case 6:
+			location.VerticalAccuracy = v
+		case 11:
+			location.MotionActivityType = v
+		case 12:
+			location.MotionActivityConfidence = v
 		}
 	}
-	return lat, lon, nil
+	return location, nil
 }
 
 func nextField(data []byte, pos int) (int, int, []byte, int, error) {
