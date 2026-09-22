@@ -28,3 +28,16 @@ func TestControlledPolicyRejectsBlockedBaseDomain(t *testing.T) {
 		t.Fatal("expected production base domain rejection")
 	}
 }
+
+func TestControlledPolicyAllowsOptionalExactAlias(t *testing.T) {
+	policy, err := NewControlled("lab.example.test", "2600-1900-4040-41b3--.sslip.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policy.AllowedHost("2600-1900-4040-41b3--.sslip.io") {
+		t.Fatal("expected exact lab alias allowed")
+	}
+	if policy.AllowedHost("other.2600-1900-4040-41b3--.sslip.io") {
+		t.Fatal("unexpected subdomain alias allowed")
+	}
+}
