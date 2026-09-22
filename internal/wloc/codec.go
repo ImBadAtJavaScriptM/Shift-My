@@ -5,39 +5,54 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 )
 
 const maxStringLength = 1 << 16
 
-// Request is the subset of the WLOC request envelope used by the controlled
-// lab emulator. Unknown protobuf fields are intentionally ignored.
 type Request struct {
 	Version       uint16
 	Locale        string
 	AppIdentifier string
 	OSVersion     string
 	FunctionID    uint32
+	Envelope      string
 	BSSIDs        []string
 }
 
-// DeviceLocation is the subset of a WLOC response that the controlled lab
-// emulator needs for tests and diagnostics.
 type DeviceLocation struct {
 	BSSID       string
 	LatitudeE8  int64
 	LongitudeE8 int64
 }
 
-// ParseRequest decodes the observed ARPC-style request envelope and extracts
-// repeated WifiDevice BSSIDs from the embedded protobuf payload.
 func ParseRequest(data []byte) (Request, error) {
 	if len(data) < 2 {
 		return Request{}, errors.New("request is too short")
 	}
-	pos := 0
-	req := Request{Version: binary.BigEndian.Uint16(data[pos : pos+2])}
-	pos += 2
+	if len(data) >= 10 {
+		payloadLen := int(binary.BigEndian.Uint32(data[6:10]))
+		if payloadLen == len(data)-10 {
+			req := Request{
+				Version:    binary.BigEndian.Uint16(data[0:2]),
+				FunctionID: binary.BigEndian.Uint32(data[2:6]),
+				Envelope:   "compact",
+			}
+			bssids, err := parseAppleWLocBSSIDs(data[10:])
+			if err != nil {
+				return Request{}, err
+			}
+			if len(bssids) == 0 {
+				return Request{}, errors.New("request contains no wifi devices")
+			}
+			req.BSSIDs = bssids
+			return req, nil
+		}
+	}
 
+	pos := 0
+	req := Request{Version: binary.BigEndian.Uint16(data[pos : pos+2]), Envelope: "legacy"}
+	pos += 2
 	var err error
 	if req.Locale, err = readBEString(data, &pos); err != nil {
 		return Request{}, fmt.Errorf("locale: %w", err)
@@ -55,10 +70,9 @@ func ParseRequest(data []byte) (Request, error) {
 	pos += 4
 	payloadLen := int(binary.BigEndian.Uint32(data[pos : pos+4]))
 	pos += 4
-	if payloadLen < 0 || payloadLen != len(data)-pos {
+	if payloadLen != len(data)-pos {
 		return Request{}, fmt.Errorf("payload length %d does not match %d remaining bytes", payloadLen, len(data)-pos)
 	}
-
 	req.BSSIDs, err = parseAppleWLocBSSIDs(data[pos:])
 	if err != nil {
 		return Request{}, err
@@ -69,8 +83,6 @@ func ParseRequest(data []byte) (Request, error) {
 	return req, nil
 }
 
-// BuildResponse returns the observed 10-byte WLOC response envelope followed by
-// an AppleWLoc protobuf containing one target location for every requested BSSID.
 func BuildResponse(req Request, latitude, longitude float64) ([]byte, error) {
 	if latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 {
 		return nil, errors.New("coordinates out of range")
@@ -78,7 +90,6 @@ func BuildResponse(req Request, latitude, longitude float64) ([]byte, error) {
 	if len(req.BSSIDs) == 0 {
 		return nil, errors.New("at least one BSSID is required")
 	}
-
 	latE8 := int64(math.Round(latitude * 1e8))
 	lonE8 := int64(math.Round(longitude * 1e8))
 	payload := make([]byte, 0, len(req.BSSIDs)*48)
@@ -89,13 +100,11 @@ func BuildResponse(req Request, latitude, longitude float64) ([]byte, error) {
 		location := make([]byte, 0, 24)
 		location = appendVarintField(location, 1, latE8)
 		location = appendVarintField(location, 2, lonE8)
-
 		wifi := make([]byte, 0, len(bssid)+len(location)+8)
 		wifi = appendBytesField(wifi, 1, []byte(bssid))
 		wifi = appendBytesField(wifi, 2, location)
 		payload = appendBytesField(payload, 2, wifi)
 	}
-
 	frame := make([]byte, 10, 10+len(payload))
 	binary.BigEndian.PutUint16(frame[0:2], req.Version)
 	binary.BigEndian.PutUint32(frame[2:6], req.FunctionID)
@@ -104,8 +113,6 @@ func BuildResponse(req Request, latitude, longitude float64) ([]byte, error) {
 	return frame, nil
 }
 
-// ParseResponse extracts the response envelope and target coordinates from the
-// limited protobuf subset emitted by BuildResponse and by the captured fixtures.
 func ParseResponse(data []byte) (uint16, uint32, []DeviceLocation, error) {
 	if len(data) < 10 {
 		return 0, 0, nil, errors.New("response is too short")
@@ -139,24 +146,54 @@ func readBEString(data []byte, pos *int) (string, error) {
 
 func parseAppleWLocBSSIDs(payload []byte) ([]string, error) {
 	var bssids []string
+	seen := map[string]struct{}{}
+	add := func(value string) {
+		if !looksLikeBSSID(value) {
+			return
+		}
+		key := strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		bssids = append(bssids, value)
+	}
 	for pos := 0; pos < len(payload); {
 		field, wire, value, next, err := nextField(payload, pos)
 		if err != nil {
 			return nil, fmt.Errorf("apple wloc protobuf: %w", err)
 		}
 		pos = next
-		if field != 2 || wire != 2 {
-			continue
-		}
-		bssid, err := parseWifiDeviceBSSID(value)
-		if err != nil {
-			return nil, err
-		}
-		if bssid != "" {
-			bssids = append(bssids, bssid)
+		switch {
+		case field == 1 && wire == 2:
+			add(string(value))
+		case field == 2 && wire == 2:
+			bssid, err := parseWifiDeviceBSSID(value)
+			if err != nil {
+				return nil, err
+			}
+			add(bssid)
 		}
 	}
 	return bssids, nil
+}
+
+func looksLikeBSSID(value string) bool {
+	if len(value) != 17 {
+		return false
+	}
+	for i, c := range value {
+		if i%3 == 2 {
+			if c != ':' {
+				return false
+			}
+			continue
+		}
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func parseWifiDeviceBSSID(data []byte) (string, error) {
@@ -239,10 +276,10 @@ func parseLocation(data []byte) (int64, int64, error) {
 	return lat, lon, nil
 }
 
-// nextField returns the field number, wire type and encoded field value. For
-// wire type 0 the returned value contains the varint bytes themselves; for wire
-// type 2 it contains only the length-delimited payload.
 func nextField(data []byte, pos int) (int, int, []byte, int, error) {
+	if pos >= len(data) {
+		return 0, 0, nil, pos, errors.New("field is truncated")
+	}
 	key, n := binary.Uvarint(data[pos:])
 	if n <= 0 {
 		return 0, 0, nil, pos, errors.New("field key varint is invalid")
@@ -253,7 +290,6 @@ func nextField(data []byte, pos int) (int, int, []byte, int, error) {
 	if field == 0 {
 		return 0, 0, nil, pos, errors.New("field number 0 is invalid")
 	}
-
 	switch wire {
 	case 0:
 		start := pos
