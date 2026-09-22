@@ -64,3 +64,21 @@ A successful response is binary and carries the `X-Shift-My-Lab` marker.
 This emulator is for protocol validation on project-owned infrastructure. It does
 not add production Apple routing, production hostname certificates, or a Core
 Location bypass.
+
+
+## Response-mode comparison
+
+The controlled lab endpoint supports two response shapes through the `mode`
+query parameter:
+
+- `mode=preserve` keeps all original top-level protobuf fields while replacing
+  WifiDevice location blocks. This is also the default when `mode` is omitted.
+- `mode=clear-result-metadata` performs the same location rewrite but omits
+  top-level fields 3 (`num_cell_results`), 4 (`num_wifi_results`), and 33
+  (`device_type`) to mirror the public reference rewriter's cleanup behavior.
+
+Each successful response includes `X-Shift-My-WLOC-Mode` with the selected
+mode so captures are unambiguous.
+
+These modes are only exposed on the existing project-owned controlled TLS
+hosts.
