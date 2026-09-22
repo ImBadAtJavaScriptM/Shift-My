@@ -173,6 +173,8 @@ func (s *Server) serveWLOC(w http.ResponseWriter, r *http.Request, host string) 
 		payload, err = wloc.BuildResponse(req, *inst.SelectedLatitude, *inst.SelectedLongitude)
 	case "clear-result-metadata":
 		payload, err = wloc.BuildResponseClearingResultMetadata(req, *inst.SelectedLatitude, *inst.SelectedLongitude)
+	case "coords-only":
+		payload, err = wloc.BuildResponseCoordinatesOnly(req, *inst.SelectedLatitude, *inst.SelectedLongitude)
 	default:
 		http.Error(w, "unsupported wloc mode", http.StatusBadRequest)
 		return
