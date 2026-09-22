@@ -1,6 +1,7 @@
 package wloc
 
 import (
+	"bytes"
 	"encoding/hex"
 	"math"
 	"testing"
@@ -157,5 +158,89 @@ func TestRichResponseContainsReferenceMetadataFields(t *testing.T) {
 		got.MotionActivityType != 63 ||
 		got.MotionActivityConfidence != 467 {
 		t.Fatalf("metadata=%+v", got)
+	}
+}
+
+func TestBuildResponsePreservesTopLevelAndWifiUnknownFields(t *testing.T) {
+	oldLocation := appendVarintField(nil, 1, 123)
+	oldLocation = appendVarintField(oldLocation, 2, -456)
+
+	wifi := appendBytesField(nil, 1, []byte("aa:bb:cc:dd:ee:01"))
+	wifi = appendBytesField(wifi, 2, oldLocation)
+	wifiUnknown := appendVarintField(nil, 7, 9)
+	wifi = append(wifi, wifiUnknown...)
+
+	topBundle := appendBytesField(nil, 5, []byte("com.example.fixture"))
+	topUnknown31 := appendVarintField(nil, 31, 1)
+	topUnknown32 := appendVarintField(nil, 32, 2)
+
+	payload := appendBytesField(nil, 2, wifi)
+	payload = append(payload, topBundle...)
+	payload = append(payload, topUnknown31...)
+	payload = append(payload, topUnknown32...)
+
+	req := Request{
+		Version:    1,
+		FunctionID: 1,
+		BSSIDs:     []string{"aa:bb:cc:dd:ee:01"},
+		Payload:    payload,
+	}
+	data, err := BuildResponse(req, 34.0094, -118.4973)
+	if err != nil {
+		t.Fatal(err)
+	}
+	responsePayload := data[10:]
+
+	for name, field := range map[string][]byte{
+		"top bundle": topBundle,
+		"top field 31": topUnknown31,
+		"top field 32": topUnknown32,
+		"wifi field 7": wifiUnknown,
+	} {
+		if !bytes.Contains(responsePayload, field) {
+			t.Fatalf("%s was not preserved: %x", name, responsePayload)
+		}
+	}
+	if bytes.Contains(responsePayload, oldLocation) {
+		t.Fatalf("old location was preserved instead of replaced: %x", responsePayload)
+	}
+
+	_, _, devices, err := ParseResponse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("devices=%+v", devices)
+	}
+	got := devices[0]
+	if got.LatitudeE8 != int64(math.Round(34.0094*1e8)) ||
+		got.LongitudeE8 != int64(math.Round(-118.4973*1e8)) {
+		t.Fatalf("location=%+v", got)
+	}
+}
+
+func TestParsedRequestRetainsOriginalPayloadForRewrite(t *testing.T) {
+	data, err := hex.DecodeString(capturedLegacyRequestHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := ParseRequest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Payload) == 0 {
+		t.Fatal("expected parsed request payload to be retained")
+	}
+	original := append([]byte(nil), req.Payload...)
+
+	response, err := BuildResponse(req, 34.0094, -118.4973)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(response[10:], original) {
+		t.Fatal("expected wifi location block to be rewritten")
+	}
+	if !bytes.Contains(response[10:], []byte("34:DB:FD:43:E3:A1")) {
+		t.Fatalf("BSSID was not preserved: %x", response[10:])
 	}
 }
