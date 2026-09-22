@@ -10,6 +10,7 @@ import (
 const capturedLegacyRequestHex = "00010005656e5f55530013636f6d2e6170706c652e6c6f636174696f6e64000a382e312e313242343131000000010000001912130a1133343a44423a46443a34333a45333a413118002001"
 const compactResponseStyleFixtureHex = "000100000001000000190a1134323a37353a63333a66393a61313a3339f80101800202"
 const modernStructuredRequestHex = "0001000a656e2d3030315f3030310013636f6d2e6170706c652e6c6f636174696f6e64000d31382e362e322e323247313030000000010000001912130a1134323a44423a46443a34333a45333a413118002001"
+const realisticMultiBSSIDRequestHex = "000100000001000000be12350a1161613a64353a39643a35383a65393a396412200880d4dae60e10d8c7c3f6d8ffffffff011827200328920430e807583f60d30312350a1133633a37633a33663a65343a37323a343812200880d4dae60e10d8c7c3f6d8ffffffff011827200328920430e807583f60d30312350a1138613a64353a39643a35383a65393a396412200880d4dae60e10d8c7c3f6d8ffffffff011827200328920430e807583f60d3030a1137613a64353a39643a35383a65393a3964f80101800202"
 const capturedNotFoundResponseHex = "0001000000010000004312410a1133343a64623a66643a34333a65333a6131122c088098f7f8bcffffffff01108098f7f8bcffffffff0118ffffffffffffffffff0128ffffffffffffffffff01"
 
 func TestParseCapturedLegacyRequest(t *testing.T) {
@@ -320,4 +321,52 @@ func TestClearResultMetadataVariant(t *testing.T) {
 
 	t.Logf("preserve_bytes=%d preserve_hex=%x", len(preserve), preserve)
 	t.Logf("cleared_bytes=%d cleared_hex=%x", len(cleared), cleared)
+}
+
+func TestRealisticMultiBSSIDFixtureModesAreIdenticalWhenResultMetadataAbsent(t *testing.T) {
+	data, err := hex.DecodeString(realisticMultiBSSIDRequestHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := ParseRequest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preserve, err := BuildResponse(req, 34.0094, -118.4973)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := BuildResponseClearingResultMetadata(req, 34.0094, -118.4973)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(preserve, cleared) {
+		t.Fatalf("expected identical responses when fields 3,4,33 are absent\npreserve=%x\ncleared=%x", preserve, cleared)
+	}
+	if len(preserve) != 200 {
+		t.Fatalf("response length=%d want=200", len(preserve))
+	}
+	_, _, devices, err := ParseResponse(preserve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 3 {
+		t.Fatalf("wifi devices=%d want=3: %+v", len(devices), devices)
+	}
+	wantLat := int64(math.Round(34.0094 * 1e8))
+	wantLon := int64(math.Round(-118.4973 * 1e8))
+	for i, device := range devices {
+		if device.LatitudeE8 != wantLat || device.LongitudeE8 != wantLon {
+			t.Fatalf("device[%d]=%+v", i, device)
+		}
+	}
+	for name, field := range map[string][]byte{
+		"top-level field 1 BSSID-like value": []byte("7a:d5:9d:58:e9:9d"),
+		"field 31": appendVarintField(nil, 31, 1),
+		"field 32": appendVarintField(nil, 32, 2),
+	} {
+		if !bytes.Contains(preserve[10:], field) {
+			t.Fatalf("%s was not preserved", name)
+		}
+	}
 }
