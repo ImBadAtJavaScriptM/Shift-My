@@ -33,6 +33,7 @@ func NewControlled(publicHost string, aliases ...string) (Policy, error) {
 			return Policy{}, fmt.Errorf("invalid controlled alias %q", alias)
 		}
 		allowed[alias] = struct{}{}
+		hosts = append(hosts, alias)
 	}
 	return Policy{base: base, allowed: allowed, hosts: hosts}, nil
 }
