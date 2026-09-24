@@ -12,6 +12,7 @@ const capturedLegacyRequestHex = "00010005656e5f55530013636f6d2e6170706c652e6c6f
 const compactResponseStyleFixtureHex = "000100000001000000190a1134323a37353a63333a66393a61313a3339f80101800202"
 const modernStructuredRequestHex = "0001000a656e2d3030315f3030310013636f6d2e6170706c652e6c6f636174696f6e64000d31382e362e322e323247313030000000010000001912130a1134323a44423a46443a34333a45333a413118002001"
 const realisticMultiBSSIDRequestHex = "000100000001000000be12350a1161613a64353a39643a35383a65393a396412200880d4dae60e10d8c7c3f6d8ffffffff011827200328920430e807583f60d30312350a1133633a37633a33663a65343a37323a343812200880d4dae60e10d8c7c3f6d8ffffffff011827200328920430e807583f60d30312350a1138613a64353a39643a35383a65393a396412200880d4dae60e10d8c7c3f6d8ffffffff011827200328920430e807583f60d3030a1137613a64353a39643a35383a65393a3964f80101800202"
+const modernFunction2BSSIDOnlyRequestHex = "0001000a656e2d3030315f3030310013636f6d2e6170706c652e6c6f636174696f6e64000a32362e322e3233433535000000020000004412130a1130323a30303a30303a30303a30303a303112130a1130323a30303a30303a30303a30303a303212130a1130323a30303a30303a30303a30303a3033f80101800202"
 const capturedNotFoundResponseHex = "0001000000010000004312410a1133343a64623a66643a34333a65333a6131122c088098f7f8bcffffffff01108098f7f8bcffffffff0118ffffffffffffffffff0128ffffffffffffffffff01"
 
 func TestParseCapturedLegacyRequest(t *testing.T) {
@@ -645,5 +646,55 @@ func TestCoordinatesOnlyAddsMinimalLocationWhenMissing(t *testing.T) {
 	}
 	if !bytes.Contains(response[10:], wifiUnknown) {
 		t.Fatalf("wifi unknown field was not preserved: %x", response[10:])
+	}
+}
+
+func TestModernFunction2BSSIDOnlyRequestAndCoordsOnlyResponse(t *testing.T) {
+	data, err := hex.DecodeString(modernFunction2BSSIDOnlyRequestHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := ParseRequest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Version != 1 || req.FunctionID != 2 || req.Envelope != "structured-arpc" {
+		t.Fatalf("request=%+v", req)
+	}
+	if req.Locale != "en-001_001" || req.AppIdentifier != "com.apple.locationd" || req.OSVersion != "26.2.23C55" {
+		t.Fatalf("envelope=%+v", req)
+	}
+	wantBSSIDs := []string{
+		"02:00:00:00:00:01",
+		"02:00:00:00:00:02",
+		"02:00:00:00:00:03",
+	}
+	if !slices.Equal(req.BSSIDs, wantBSSIDs) {
+		t.Fatalf("bssids=%v want=%v", req.BSSIDs, wantBSSIDs)
+	}
+
+	response, err := BuildResponseCoordinatesOnly(req, 34.0094, -118.4973)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, functionID, devices, err := ParseResponse(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != 1 || functionID != 2 {
+		t.Fatalf("version=%d function=%d", version, functionID)
+	}
+	if len(devices) != 3 {
+		t.Fatalf("devices=%+v", devices)
+	}
+	wantLat := int64(math.Trunc(34.0094 * 1e8))
+	wantLon := int64(math.Trunc(-118.4973 * 1e8))
+	for i, device := range devices {
+		if device.BSSID != wantBSSIDs[i] || device.LatitudeE8 != wantLat || device.LongitudeE8 != wantLon {
+			t.Fatalf("device[%d]=%+v", i, device)
+		}
+		if device.HorizontalAccuracy != 0 || device.Altitude != 0 || device.MotionActivityType != 0 {
+			t.Fatalf("coords-only injected metadata into request-only wifi device: %+v", device)
+		}
 	}
 }
