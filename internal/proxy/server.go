@@ -149,7 +149,7 @@ func (s *Server) serveWLOC(w http.ResponseWriter, r *http.Request, host string) 
 	}
 
 	req, err := wloc.ParseRequest(body)
-	if err != nil || req.FunctionID != 1 {
+	if err != nil || (req.FunctionID != 1 && req.FunctionID != 2) {
 		writeWLOCBadRequest(w)
 		return
 	}
