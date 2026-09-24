@@ -698,3 +698,97 @@ func TestModernFunction2BSSIDOnlyRequestAndCoordsOnlyResponse(t *testing.T) {
 		}
 	}
 }
+
+func TestPatchResponseCoordinatesOnlyPatchesCapturedNotFoundSentinel(t *testing.T) {
+	data, err := hex.DecodeString(capturedNotFoundResponseHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched, stats, err := PatchResponseCoordinatesOnly(data, 34.0094, -118.4973)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Wifi != 1 || stats.Cell != 0 || stats.Locations != 1 {
+		t.Fatalf("stats=%+v", stats)
+	}
+	_, _, devices, err := ParseResponse(patched)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("devices=%+v", devices)
+	}
+	got := devices[0]
+	if got.LatitudeE8 != int64(math.Trunc(34.0094*1e8)) ||
+		got.LongitudeE8 != int64(math.Trunc(-118.4973*1e8)) {
+		t.Fatalf("location=%+v", got)
+	}
+	// The captured not-found response carries -1 metadata. A response-side
+	// patch must preserve that rather than rebuilding the Location message.
+	if got.HorizontalAccuracy != -1 || got.UnknownValue4 != 0 || got.Altitude != 0 {
+		t.Fatalf("metadata changed unexpectedly: %+v", got)
+	}
+}
+
+func TestPatchResponseCoordinatesOnlyDoesNotSynthesizeMissingLocation(t *testing.T) {
+	wifi := appendBytesField(nil, 1, []byte("02:00:00:00:00:01"))
+	payload := appendBytesField(nil, 2, wifi)
+	frame := make([]byte, 10, 10+len(payload))
+	binary.BigEndian.PutUint16(frame[0:2], 1)
+	binary.BigEndian.PutUint32(frame[2:6], 2)
+	binary.BigEndian.PutUint32(frame[6:10], uint32(len(payload)))
+	frame = append(frame, payload...)
+
+	patched, stats, err := PatchResponseCoordinatesOnly(frame, 34.0094, -118.4973)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Locations != 0 || stats.Wifi != 0 || stats.Cell != 0 {
+		t.Fatalf("stats=%+v", stats)
+	}
+	if !bytes.Equal(patched, frame) {
+		t.Fatalf("request-only response was modified\noriginal=%x\npatched=%x", frame, patched)
+	}
+}
+
+func TestPatchResponseCoordinatesOnlyPatchesCellResponseAndPreservesFields(t *testing.T) {
+	location := appendVarintField(nil, 1, 111)
+	location = appendVarintField(location, 2, 222)
+	location = appendVarintField(location, 3, 88)
+	location = appendVarintField(location, 9, 123456789)
+
+	cell := appendVarintField(nil, 1, 460)
+	cell = appendVarintField(cell, 2, 11)
+	cell = appendBytesField(cell, 5, location)
+	cell = appendVarintField(cell, 7, 9)
+
+	payload := appendBytesField(nil, 22, cell)
+	payload = appendVarintField(payload, 31, 1)
+
+	frame := make([]byte, 10, 10+len(payload))
+	binary.BigEndian.PutUint16(frame[0:2], 1)
+	binary.BigEndian.PutUint32(frame[2:6], 2)
+	binary.BigEndian.PutUint32(frame[6:10], uint32(len(payload)))
+	frame = append(frame, payload...)
+
+	patched, stats, err := PatchResponseCoordinatesOnly(frame, 34.0094, -118.4973)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Cell != 1 || stats.Wifi != 0 || stats.Locations != 1 {
+		t.Fatalf("stats=%+v", stats)
+	}
+	if !bytes.Contains(patched[10:], appendVarintField(nil, 3, 88)) {
+		t.Fatal("horizontal accuracy was not preserved")
+	}
+	if !bytes.Contains(patched[10:], appendVarintField(nil, 9, 123456789)) {
+		t.Fatal("timestamp-like field was not preserved")
+	}
+	if !bytes.Contains(patched[10:], appendVarintField(nil, 31, 1)) {
+		t.Fatal("top-level opaque field was not preserved")
+	}
+	if bytes.Contains(patched[10:], appendVarintField(nil, 1, 111)) &&
+		bytes.Contains(patched[10:], appendVarintField(nil, 2, 222)) {
+		t.Fatal("old cell coordinates still present")
+	}
+}
