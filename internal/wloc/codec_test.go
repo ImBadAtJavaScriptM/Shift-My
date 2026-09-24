@@ -2,6 +2,7 @@ package wloc
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"math"
 	"slices"
