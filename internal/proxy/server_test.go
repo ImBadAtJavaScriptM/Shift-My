@@ -371,3 +371,50 @@ func TestShortControlledWLOCPathDefaultsToCoordsOnly(t *testing.T) {
 		t.Fatalf("mode=%q", got)
 	}
 }
+
+func TestControlledWLOCAcceptsFunction2(t *testing.T) {
+	srv, _ := testServer(t)
+
+	payload := appendBytesFieldForProxyTest(nil, 2,
+		appendBytesFieldForProxyTest(nil, 1, []byte("02:00:00:00:00:01")))
+	frame := make([]byte, 10, 10+len(payload))
+	binary.BigEndian.PutUint16(frame[0:2], 1)
+	binary.BigEndian.PutUint32(frame[2:6], 2)
+	binary.BigEndian.PutUint32(frame[6:10], uint32(len(payload)))
+	frame = append(frame, payload...)
+
+	req := httptest.NewRequest(http.MethodPost, "https://device-loc.lab.example.test/w", bytes.NewReader(frame))
+	req.Host = "device-loc.lab.example.test"
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
+	}
+	_, functionID, devices, err := wloc.ParseResponse(rr.Body.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if functionID != 2 || len(devices) != 1 {
+		t.Fatalf("function=%d devices=%+v", functionID, devices)
+	}
+}
+
+func TestControlledWLOCRejectsUnsupportedFunctionID(t *testing.T) {
+	srv, _ := testServer(t)
+
+	payload := appendBytesFieldForProxyTest(nil, 2,
+		appendBytesFieldForProxyTest(nil, 1, []byte("02:00:00:00:00:01")))
+	frame := make([]byte, 10, 10+len(payload))
+	binary.BigEndian.PutUint16(frame[0:2], 1)
+	binary.BigEndian.PutUint32(frame[2:6], 3)
+	binary.BigEndian.PutUint32(frame[6:10], uint32(len(payload)))
+	frame = append(frame, payload...)
+
+	req := httptest.NewRequest(http.MethodPost, "https://device-loc.lab.example.test/w", bytes.NewReader(frame))
+	req.Host = "device-loc.lab.example.test"
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
+	}
+}
