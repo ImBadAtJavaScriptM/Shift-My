@@ -171,6 +171,212 @@ func BuildResponseCoordinatesOnly(req Request, latitude, longitude float64) ([]b
 	return frame, nil
 }
 
+
+type ResponsePatchStats struct {
+	Wifi      int
+	Cell      int
+	Locations int
+}
+
+// PatchResponseCoordinatesOnly is a controlled-lab response rewriter. Unlike
+// BuildResponseCoordinatesOnly (which can synthesize a Location for a
+// request-only WifiDevice), this function only patches Location messages that
+// already contain both latitude and longitude. All other response bytes and
+// fields are preserved.
+func PatchResponseCoordinatesOnly(data []byte, latitude, longitude float64) ([]byte, ResponsePatchStats, error) {
+	if latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 {
+		return nil, ResponsePatchStats{}, errors.New("coordinates out of range")
+	}
+	latE8 := int64(math.Trunc(latitude * 1e8))
+	lonE8 := int64(math.Trunc(longitude * 1e8))
+
+	// Compact WLOC response: version u16, function u32, payload length u32.
+	if len(data) >= 10 {
+		payloadLen := int(binary.BigEndian.Uint32(data[6:10]))
+		if payloadLen == len(data)-10 {
+			payload, stats, err := patchExistingResponsePayload(data[10:], latE8, lonE8)
+			if err != nil {
+				return nil, ResponsePatchStats{}, err
+			}
+			if stats.Locations == 0 {
+				return append([]byte(nil), data...), stats, nil
+			}
+			out := append([]byte(nil), data[:10]...)
+			binary.BigEndian.PutUint32(out[6:10], uint32(len(payload)))
+			out = append(out, payload...)
+			return out, stats, nil
+		}
+	}
+
+	// Structured ARPC response: version + 3 Pascal strings + function + len.
+	pos := 2
+	if len(data) >= 2 {
+		for i := 0; i < 3; i++ {
+			if _, err := readBEString(data, &pos); err != nil {
+				return nil, ResponsePatchStats{}, errors.New("unsupported WLOC response framing")
+			}
+		}
+		if len(data)-pos >= 8 {
+			lengthOffset := pos + 4
+			payloadOffset := pos + 8
+			payloadLen := int(binary.BigEndian.Uint32(data[lengthOffset:payloadOffset]))
+			if payloadLen == len(data)-payloadOffset {
+				payload, stats, err := patchExistingResponsePayload(data[payloadOffset:], latE8, lonE8)
+				if err != nil {
+					return nil, ResponsePatchStats{}, err
+				}
+				if stats.Locations == 0 {
+					return append([]byte(nil), data...), stats, nil
+				}
+				out := append([]byte(nil), data[:payloadOffset]...)
+				binary.BigEndian.PutUint32(out[lengthOffset:payloadOffset], uint32(len(payload)))
+				out = append(out, payload...)
+				return out, stats, nil
+			}
+		}
+	}
+	return nil, ResponsePatchStats{}, errors.New("unsupported WLOC response framing")
+}
+
+func patchExistingResponsePayload(payload []byte, latE8, lonE8 int64) ([]byte, ResponsePatchStats, error) {
+	out := make([]byte, 0, len(payload))
+	var stats ResponsePatchStats
+	for pos := 0; pos < len(payload); {
+		start := pos
+		field, wire, value, next, err := nextField(payload, pos)
+		if err != nil {
+			return nil, ResponsePatchStats{}, fmt.Errorf("apple wloc response protobuf: %w", err)
+		}
+		pos = next
+
+		switch {
+		case field == 2 && wire == 2:
+			patched, changed, err := patchExistingWifiResponse(value, latE8, lonE8)
+			if err != nil {
+				return nil, ResponsePatchStats{}, err
+			}
+			if changed {
+				stats.Wifi++
+				stats.Locations++
+				out = appendBytesField(out, field, patched)
+			} else {
+				out = append(out, payload[start:next]...)
+			}
+		case (field == 22 || field == 24) && wire == 2:
+			patched, changed, err := patchExistingCellResponse(value, latE8, lonE8)
+			if err != nil {
+				return nil, ResponsePatchStats{}, err
+			}
+			if changed {
+				stats.Cell++
+				stats.Locations++
+				out = appendBytesField(out, field, patched)
+			} else {
+				out = append(out, payload[start:next]...)
+			}
+		default:
+			out = append(out, payload[start:next]...)
+		}
+	}
+	return out, stats, nil
+}
+
+func patchExistingWifiResponse(data []byte, latE8, lonE8 int64) ([]byte, bool, error) {
+	out := make([]byte, 0, len(data))
+	changed := false
+	hasBSSID := false
+	for pos := 0; pos < len(data); {
+		start := pos
+		field, wire, value, next, err := nextField(data, pos)
+		if err != nil {
+			return nil, false, fmt.Errorf("wifi response protobuf: %w", err)
+		}
+		pos = next
+		if field == 1 && wire == 2 && looksLikeBSSID(string(value)) {
+			hasBSSID = true
+		}
+		if field == 2 && wire == 2 {
+			location, locationChanged, err := patchExistingLocation(value, latE8, lonE8)
+			if err != nil {
+				return nil, false, err
+			}
+			if locationChanged {
+				changed = true
+				out = appendBytesField(out, 2, location)
+				continue
+			}
+		}
+		out = append(out, data[start:next]...)
+	}
+	return out, changed && hasBSSID, nil
+}
+
+func patchExistingCellResponse(data []byte, latE8, lonE8 int64) ([]byte, bool, error) {
+	out := make([]byte, 0, len(data))
+	changed := false
+	for pos := 0; pos < len(data); {
+		start := pos
+		field, wire, value, next, err := nextField(data, pos)
+		if err != nil {
+			return nil, false, fmt.Errorf("cell response protobuf: %w", err)
+		}
+		pos = next
+		if field == 5 && wire == 2 {
+			location, locationChanged, err := patchExistingLocation(value, latE8, lonE8)
+			if err != nil {
+				return nil, false, err
+			}
+			if locationChanged {
+				changed = true
+				out = appendBytesField(out, 5, location)
+				continue
+			}
+		}
+		out = append(out, data[start:next]...)
+	}
+	return out, changed, nil
+}
+
+func patchExistingLocation(data []byte, latE8, lonE8 int64) ([]byte, bool, error) {
+	latSeen := false
+	lonSeen := false
+	for pos := 0; pos < len(data); {
+		field, wire, _, next, err := nextField(data, pos)
+		if err != nil {
+			return nil, false, fmt.Errorf("location response protobuf: %w", err)
+		}
+		pos = next
+		if field == 1 && wire == 0 {
+			latSeen = true
+		}
+		if field == 2 && wire == 0 {
+			lonSeen = true
+		}
+	}
+	if !latSeen || !lonSeen {
+		return append([]byte(nil), data...), false, nil
+	}
+
+	out := make([]byte, 0, len(data))
+	for pos := 0; pos < len(data); {
+		start := pos
+		field, wire, _, next, err := nextField(data, pos)
+		if err != nil {
+			return nil, false, fmt.Errorf("location response protobuf: %w", err)
+		}
+		pos = next
+		switch {
+		case field == 1 && wire == 0:
+			out = appendVarintField(out, 1, latE8)
+		case field == 2 && wire == 0:
+			out = appendVarintField(out, 2, lonE8)
+		default:
+			out = append(out, data[start:next]...)
+		}
+	}
+	return out, true, nil
+}
+
 func buildResponse(req Request, latitude, longitude float64, clearResultMetadata bool) ([]byte, error) {
 	if latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 {
 		return nil, errors.New("coordinates out of range")
