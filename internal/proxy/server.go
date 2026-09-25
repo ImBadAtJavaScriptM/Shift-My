@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -172,18 +173,25 @@ func (s *Server) serveWLOC(w http.ResponseWriter, r *http.Request, host string) 
 	}
 
 	var payload []byte
+	patchStats := wloc.ResponsePatchStats{}
 	switch mode {
 	case "preserve":
 		payload, err = wloc.BuildResponse(req, *inst.SelectedLatitude, *inst.SelectedLongitude)
+		patchStats.Wifi = len(req.BSSIDs)
+		patchStats.Locations = len(req.BSSIDs)
 	case "clear-result-metadata":
 		payload, err = wloc.BuildResponseClearingResultMetadata(req, *inst.SelectedLatitude, *inst.SelectedLongitude)
+		patchStats.Wifi = len(req.BSSIDs)
+		patchStats.Locations = len(req.BSSIDs)
 	case "coords-only":
 		payload, err = wloc.BuildResponseCoordinatesOnly(req, *inst.SelectedLatitude, *inst.SelectedLongitude)
+		patchStats.Wifi = len(req.BSSIDs)
+		patchStats.Locations = len(req.BSSIDs)
 	case "patch-rich":
 		var fixture []byte
 		fixture, err = wloc.BuildRichResponseFixture(req, wloc.DefaultRichFixtureWifiRecords)
 		if err == nil {
-			payload, _, err = wloc.PatchResponseCoordinatesOnly(fixture, *inst.SelectedLatitude, *inst.SelectedLongitude)
+			payload, patchStats, err = wloc.PatchResponseCoordinatesOnly(fixture, *inst.SelectedLatitude, *inst.SelectedLongitude)
 		}
 	default:
 		http.Error(w, "unsupported wloc mode", http.StatusBadRequest)
@@ -197,6 +205,21 @@ func (s *Server) serveWLOC(w http.ResponseWriter, r *http.Request, host string) 
 		http.Error(w, "record lab TLS activity", http.StatusInternalServerError)
 		return
 	}
+	logWLOCEvent(wlocEvent{
+		Timestamp:        time.Now().UTC().Format(time.RFC3339Nano),
+		Host:             host,
+		Path:             r.URL.Path,
+		Mode:             mode,
+		Envelope:         req.Envelope,
+		FunctionID:       req.FunctionID,
+		RequestBytes:     len(body),
+		RequestBSSIDs:    len(req.BSSIDs),
+		ResponseBytes:    len(payload),
+		PatchedWifi:      patchStats.Wifi,
+		PatchedCell:      patchStats.Cell,
+		PatchedLocations: patchStats.Locations,
+		TargetRevision:   inst.LocationRevision,
+	})
 
 	responseHeaders := make(http.Header)
 	responseHeaders.Set("Content-Type", "application/octet-stream")
@@ -235,4 +258,29 @@ func normalizeHost(host string) string {
 		host = parsed
 	}
 	return strings.TrimSuffix(strings.ToLower(host), ".")
+}
+
+type wlocEvent struct {
+	Timestamp        string `json:"timestamp"`
+	Host             string `json:"host"`
+	Path             string `json:"path"`
+	Mode             string `json:"mode"`
+	Envelope         string `json:"envelope"`
+	FunctionID       uint32 `json:"function_id"`
+	RequestBytes     int    `json:"request_bytes"`
+	RequestBSSIDs    int    `json:"request_bssids"`
+	ResponseBytes    int    `json:"response_bytes"`
+	PatchedWifi      int    `json:"patched_wifi"`
+	PatchedCell      int    `json:"patched_cell"`
+	PatchedLocations int    `json:"patched_locations"`
+	TargetRevision   int64  `json:"target_revision"`
+}
+
+func logWLOCEvent(event wlocEvent) {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("wloc_event marshal_error=%v", err)
+		return
+	}
+	log.Printf("wloc_event=%s", payload)
 }

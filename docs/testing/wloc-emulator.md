@@ -129,3 +129,33 @@ lab-only:
 
 Only existing latitude/longitude fields are rewritten. Missing Location messages
 are left missing, and non-coordinate protobuf fields are preserved.
+
+
+## Realistic 22-BSSID request fixture
+
+`BuildSyntheticStructuredRequestFixture(22)` creates a deterministic structured
+ARPC request at the scale observed in the controlled iPhone `locationd`
+capture. All BSSIDs are locally administered synthetic values in the
+`02:54:4d:*` namespace; the fixture does not contain harvested access-point
+identifiers.
+
+The default 22-record fixture is 607 bytes. When posted to the controlled
+`patch-rich` endpoint it produces the 114-record lab neighborhood response:
+100 coordinate-bearing Wi-Fi entries and 14 entries without Location.
+
+## Structured WLOC event logging
+
+Every successful controlled WLOC request writes one `wloc_event=<json>` line to
+the service journal. The event intentionally records shape/timing rather than
+raw BSSID values:
+
+- UTC RFC3339Nano timestamp
+- controlled host and path
+- mode, envelope, and function ID
+- request bytes and request BSSID count
+- response bytes
+- patched Wi-Fi, cell, and Location counts
+- selected target revision
+
+This makes future iPhone sysdiagnoses easy to correlate with server-side events
+without logging raw scan identifiers.

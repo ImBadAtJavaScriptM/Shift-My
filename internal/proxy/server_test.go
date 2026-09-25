@@ -461,3 +461,48 @@ func TestControlledWLOCPatchRichModeReturnsRealisticNeighborhood(t *testing.T) {
 		}
 	}
 }
+
+func TestControlledWLOCPatchRichWithSynthetic22Request(t *testing.T) {
+	srv, _ := testServer(t)
+	body, err := wloc.BuildSyntheticStructuredRequestFixture(wloc.DefaultRealisticRequestWifiRecords)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := wloc.ParseRequest(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost,
+		"https://device-loc.lab.example.test/clls/wloc?mode=patch-rich",
+		bytes.NewReader(body))
+	req.Host = "device-loc.lab.example.test"
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
+	}
+
+	_, functionID, devices, err := wloc.ParseResponse(rr.Body.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if functionID != 1 || len(devices) != wloc.DefaultRichFixtureWifiRecords {
+		t.Fatalf("function=%d devices=%d", functionID, len(devices))
+	}
+	for i, bssid := range parsed.BSSIDs {
+		if devices[i].BSSID != bssid {
+			t.Fatalf("device[%d].BSSID=%q want=%q", i, devices[i].BSSID, bssid)
+		}
+	}
+	wantPatched := wloc.DefaultRichFixtureWifiRecords - wloc.DefaultRichFixtureWifiRecords/8
+	located := 0
+	for _, device := range devices {
+		if device.LatitudeE8 != 0 || device.LongitudeE8 != 0 {
+			located++
+		}
+	}
+	if located != wantPatched {
+		t.Fatalf("located=%d want=%d", located, wantPatched)
+	}
+}
