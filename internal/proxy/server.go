@@ -179,6 +179,12 @@ func (s *Server) serveWLOC(w http.ResponseWriter, r *http.Request, host string) 
 		payload, err = wloc.BuildResponseClearingResultMetadata(req, *inst.SelectedLatitude, *inst.SelectedLongitude)
 	case "coords-only":
 		payload, err = wloc.BuildResponseCoordinatesOnly(req, *inst.SelectedLatitude, *inst.SelectedLongitude)
+	case "patch-rich":
+		var fixture []byte
+		fixture, err = wloc.BuildRichResponseFixture(req, wloc.DefaultRichFixtureWifiRecords)
+		if err == nil {
+			payload, _, err = wloc.PatchResponseCoordinatesOnly(fixture, *inst.SelectedLatitude, *inst.SelectedLongitude)
+		}
 	default:
 		http.Error(w, "unsupported wloc mode", http.StatusBadRequest)
 		return

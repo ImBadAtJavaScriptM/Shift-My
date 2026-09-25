@@ -22,15 +22,15 @@ const (
 )
 
 type Request struct {
-	Version       uint16
-	Locale        string
-	AppIdentifier string
-	OSVersion     string
-	FunctionID    uint32
-	Envelope      string
-	BSSIDs        []string
+	Version        uint16
+	Locale         string
+	AppIdentifier  string
+	OSVersion      string
+	FunctionID     uint32
+	Envelope       string
+	BSSIDs         []string
 	TopLevelBSSIDs []string
-	Payload       []byte
+	Payload        []byte
 }
 
 type DeviceLocation struct {
@@ -171,19 +171,16 @@ func BuildResponseCoordinatesOnly(req Request, latitude, longitude float64) ([]b
 	return frame, nil
 }
 
-
 type ResponsePatchStats struct {
 	Wifi      int
 	Cell      int
 	Locations int
 }
 
-// PatchResponseCoordinatesOnly is a controlled-lab response rewriter. Unlike
-// BuildResponseCoordinatesOnly (which can synthesize a Location for a
-// request-only WifiDevice), this function only patches Location messages that
-// already contain both latitude and longitude. All other response bytes and
-// fields are preserved.
-func PatchResponseCoordinatesOnly(data []byte, latitude, longitude float64) ([]byte, ResponsePatchStats, error) {
+// patchResponseCoordinatesOnlyStrict handles the original byte-zero compact or
+// structured framing. The exported wrapper in response_patch.go adds gzip,
+// short-prefix frame discovery, and raw-protobuf fallback.
+func patchResponseCoordinatesOnlyStrict(data []byte, latitude, longitude float64) ([]byte, ResponsePatchStats, error) {
 	if latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 {
 		return nil, ResponsePatchStats{}, errors.New("coordinates out of range")
 	}
@@ -418,7 +415,6 @@ func buildResponse(req Request, latitude, longitude float64, clearResultMetadata
 	frame = append(frame, payload...)
 	return frame, nil
 }
-
 
 func buildFreshPayloadCoordsOnly(bssids []string, latE8, lonE8 int64) ([]byte, error) {
 	payload := make([]byte, 0, len(bssids)*48)

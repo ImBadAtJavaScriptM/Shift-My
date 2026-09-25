@@ -76,6 +76,11 @@ query parameter:
 - `mode=clear-result-metadata` performs the same location rewrite but omits
   top-level fields 3 (`num_cell_results`), 4 (`num_wifi_results`), and 33
   (`device_type`) to mirror the public reference rewriter's cleanup behavior.
+- `mode=patch-rich` builds a deterministic 114-record lab neighborhood
+  response (100 coordinate-bearing WifiDevice entries plus 14 entries without
+  Location) and then runs the response-side coordinate patcher over it. This
+  models the larger response shape observed in the controlled iPhone capture
+  without forwarding anything to Apple or another third party.
 
 Each successful response includes `X-Shift-My-WLOC-Mode` with the selected
 mode so captures are unambiguous.
@@ -108,3 +113,19 @@ Location containing only latitude and longitude.
 This mode does not infer the meaning of root fields 1, 31, or 32 and never
 modifies them. The default remains `mode=preserve` so experiments are
 explicit rather than silently changing baseline behavior.
+
+
+## Response framing robustness
+
+The response-side patcher accepts more than one outer body shape while remaining
+lab-only:
+
+- a normal compact or structured WLOC frame beginning at byte zero;
+- a WLOC frame preceded by a short wrapper/prefix (the first 256 bytes are
+  searched conservatively);
+- a gzip-wrapped WLOC body, which is decompressed, patched, and recompressed;
+- a raw protobuf payload when at least one valid Wi-Fi or cell Location can be
+  identified and patched.
+
+Only existing latitude/longitude fields are rewritten. Missing Location messages
+are left missing, and non-coordinate protobuf fields are preserved.

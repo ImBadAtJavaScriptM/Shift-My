@@ -726,7 +726,7 @@ func TestPatchResponseCoordinatesOnlyPatchesCapturedNotFoundSentinel(t *testing.
 	}
 	// The captured not-found response carries -1 metadata. A response-side
 	// patch must preserve that rather than rebuilding the Location message.
-	if got.HorizontalAccuracy != -1 || got.UnknownValue4 != 0 || got.Altitude != 0 {
+	if got.HorizontalAccuracy != -1 || got.UnknownValue4 != 0 || got.Altitude != -1 {
 		t.Fatalf("metadata changed unexpectedly: %+v", got)
 	}
 }

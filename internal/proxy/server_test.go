@@ -2,8 +2,8 @@ package proxy
 
 import (
 	"bytes"
-	"encoding/binary"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"math"
@@ -416,5 +416,48 @@ func TestControlledWLOCRejectsUnsupportedFunctionID(t *testing.T) {
 	srv.ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
+	}
+}
+
+func TestControlledWLOCPatchRichModeReturnsRealisticNeighborhood(t *testing.T) {
+	srv, _ := testServer(t)
+	body, err := hex.DecodeString(capturedLegacyWLOCRequestHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost,
+		"https://device-loc.lab.example.test/clls/wloc?mode=patch-rich",
+		bytes.NewReader(body))
+	req.Host = "device-loc.lab.example.test"
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("X-Shift-My-WLOC-Mode"); got != "patch-rich" {
+		t.Fatalf("mode=%q", got)
+	}
+	_, functionID, devices, err := wloc.ParseResponse(rr.Body.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if functionID != 1 || len(devices) != wloc.DefaultRichFixtureWifiRecords {
+		t.Fatalf("function=%d devices=%d", functionID, len(devices))
+	}
+	wantLat := int64(math.Trunc(40.758 * 1e8))
+	wantLon := int64(math.Trunc(-73.9855 * 1e8))
+	wantPatched := wloc.DefaultRichFixtureWifiRecords - wloc.DefaultRichFixtureWifiRecords/8
+	if devices[0].BSSID != "34:DB:FD:43:E3:A1" {
+		t.Fatalf("first bssid=%q", devices[0].BSSID)
+	}
+	for i := 0; i < wantPatched; i++ {
+		if devices[i].LatitudeE8 != wantLat || devices[i].LongitudeE8 != wantLon {
+			t.Fatalf("device[%d]=%+v", i, devices[i])
+		}
+	}
+	for i := wantPatched; i < len(devices); i++ {
+		if devices[i].LatitudeE8 != 0 || devices[i].LongitudeE8 != 0 {
+			t.Fatalf("missing-location device[%d] was synthesized: %+v", i, devices[i])
+		}
 	}
 }
