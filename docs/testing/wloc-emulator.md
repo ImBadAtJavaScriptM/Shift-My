@@ -421,3 +421,19 @@ not sum to exactly 100.
 The lab lifecycle model exposes these four fields through
 `TraceSourcePercentages`. The independent tile-location source is currently
 modeled as zero because no controlled tile source has been added to the lab.
+
+
+## Empirical Wi-Fi vertical solver
+
+A separate lab estimator models the altitude stage exposed by the same GeneralCLX traces. It is intentionally independent from the horizontal solver.
+
+Observed behavior across the parsed captures is consistent with:
+
+1. match scan BSSIDs against returned entries carrying usable altitude metadata;
+2. keep only entries with vertical accuracy <= 4 m;
+3. retain at most the strongest 10 by RSSI;
+4. compute an RSSI-weighted altitude using weight=max(1,100+RSSI).
+
+Restricting validation to type-4/Wi-Fi outputs produced 44 visible cycles across two captures. The approximation had about 0.08 m mean absolute error, about 0.087 m median error, and about 0.22 m worst-case error. A previously apparent multi-meter miss was a later type-1/GPS fusion result and is not part of the instantaneous Wi-Fi vertical solve.
+
+Reported CoreLocation vertical accuracy is deliberately not modeled by this helper. In the traces it evolves across repeated provider passes and can differ substantially from the instantaneous AP-derived altitude stage.
