@@ -352,3 +352,37 @@ ALS-resolved AP set and re-evaluate the current scan. `ReevaluateCached` models
 that distinction explicitly: cached re-evaluation is allowed only after an
 initial completion-triggered dispatch and while no new completion remains
 pending.
+
+
+## Requester serial semantics
+
+The private ALS tuple contains two monotonic-looking serial fields. The lab names
+`IssuedSerial` and `CompletedSerial` are descriptive only, but the trace supports
+these practical semantics:
+
+- the issued serial advances with high-level `queryLocation` / `unifiedQuery`
+  calls;
+- one issued serial may fan out into several requester tokens and several
+  network completions;
+- the completed serial advances once per completed requester;
+- a late child completion from an older issued serial can arrive after one
+  provider pass and be coalesced with completions from a newer issued serial.
+
+Because of that fan-out, `IssuedSerial - CompletedSerial` is retained only as a
+serial-gap hint and must not be interpreted as the number of pending HTTP
+requests. The dispatcher intentionally coalesces completed requester tokens
+without requiring them to share one issued serial.
+
+## Solver state beyond visible AP fields
+
+Repeated captures with identical visible AP latitude/longitude, horizontal
+accuracy, and RSSI can still produce centimeter-scale changes in the final
+Wi-Fi fix. One repeated cycle also shows a 1 dBm RSSI increase accompanied by
+an internal timestamp refresh, with the output moving toward that AP. This is
+consistent with RSSI and freshness/state both contributing to the private
+solver.
+
+The empirical RSSI/accuracy weighting therefore models the observable horizontal
+solve well but should not be treated as an exact reconstruction. The private
+logs also expose band/stage labels such as `2.4GHz`, `stage1+5GHz`, and
+`placebad`; their exact proprietary meanings remain unresolved.

@@ -18,10 +18,13 @@ type ALSRequesterSnapshot struct {
 	Lane            int
 }
 
-// OutstandingHint returns the observed issued-minus-completed gap. Trace
-// analysis shows this behaves like outstanding ALS work, but the exact private
-// semantic is intentionally not asserted.
-func (s ALSRequesterSnapshot) OutstandingHint() int {
+// SerialGapHint returns the observed issued-minus-completed serial gap.
+//
+// Trace analysis shows IssuedSerial advances with high-level ALS query calls,
+// while CompletedSerial advances with requester completions. One issued serial
+// can fan out to several requester tokens, so this gap must not be interpreted
+// as a literal count of pending network requests.
+func (s ALSRequesterSnapshot) SerialGapHint() int {
 	return s.IssuedSerial - s.CompletedSerial
 }
 

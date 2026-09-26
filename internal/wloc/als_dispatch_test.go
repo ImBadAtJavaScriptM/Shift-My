@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestALSRequesterSnapshotOutstandingHint(t *testing.T) {
+func TestALSRequesterSnapshotSerialGapHint(t *testing.T) {
 	snapshot := ALSRequesterSnapshot{
 		RequesterToken:  1279524,
 		ProviderCode:    3636,
@@ -13,8 +13,8 @@ func TestALSRequesterSnapshotOutstandingHint(t *testing.T) {
 		CompletedSerial: 61,
 		Lane:            2,
 	}
-	if got := snapshot.OutstandingHint(); got != 10 {
-		t.Fatalf("outstanding hint=%d want=10", got)
+	if got := snapshot.SerialGapHint(); got != 10 {
+		t.Fatalf("serial gap hint=%d want=10", got)
 	}
 }
 
@@ -293,5 +293,67 @@ func TestALSCompletionDispatcherCachedReevaluation(t *testing.T) {
 	}
 	if unknown.Outcome.Resolution != "Network::AlsAllUnknown" {
 		t.Fatalf("unknown=%+v", unknown)
+	}
+}
+
+func TestALSCompletionDispatcherCoalescesMixedIssuedSerials(t *testing.T) {
+	service := NewALSAccessPointLocationService()
+	dispatcher := NewALSCompletionDispatcher(service)
+	first := DeviceLocation{
+		BSSID:              "02:00:00:00:00:11",
+		LatitudeE8:         3400940000,
+		LongitudeE8:        -11849730000,
+		HorizontalAccuracy: 20,
+	}
+	second := DeviceLocation{
+		BSSID:              "02:00:00:00:00:12",
+		LatitudeE8:         3400940000,
+		LongitudeE8:        -11849730000,
+		HorizontalAccuracy: 20,
+	}
+
+	// This mirrors the observed race where a late child completion from issued
+	// serial 71 arrived after one provider pass and was coalesced with serial-72
+	// completions before the next pass.
+	for _, completion := range []ALSCompletion{
+		{
+			Requester: ALSRequesterSnapshot{
+				RequesterToken:  3000001,
+				ProviderCode:    3636,
+				IssuedSerial:    71,
+				CompletedSerial: 62,
+				Lane:            2,
+			},
+			Response: []DeviceLocation{first},
+		},
+		{
+			Requester: ALSRequesterSnapshot{
+				RequesterToken:  3000002,
+				ProviderCode:    3636,
+				IssuedSerial:    72,
+				CompletedSerial: 63,
+				Lane:            2,
+			},
+			Response: []DeviceLocation{second},
+		},
+	} {
+		if err := dispatcher.Complete(completion); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := dispatcher.Flush([]ScanObservation{
+		{BSSID: first.BSSID, RSSI: -40},
+		{BSSID: second.BSSID, RSSI: -45},
+	}, DefaultWifiPositionMaxAPs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CoalescedCompletions != 2 || len(result.Requesters) != 2 {
+		t.Fatalf("result=%+v", result)
+	}
+	if result.Requesters[0].IssuedSerial != 71 ||
+		result.Requesters[1].IssuedSerial != 72 {
+		t.Fatalf("mixed issued serials lost: %+v", result.Requesters)
 	}
 }
