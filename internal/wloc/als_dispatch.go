@@ -37,6 +37,7 @@ type ALSCompletion struct {
 // re-evaluation in the controlled lab.
 type ALSDispatchResult struct {
 	Event                string
+	Cause                string
 	CoalescedCompletions int
 	Requesters           []ALSRequesterSnapshot
 	CachedLocations      int
@@ -115,8 +116,9 @@ func (s *ALSAccessPointLocationService) Len() int {
 // Wi-Fi state dirty. A later Flush coalesces one or more completions into a
 // single Network::AlsFinished-style scan re-evaluation.
 type ALSCompletionDispatcher struct {
-	service *ALSAccessPointLocationService
-	pending []ALSRequesterSnapshot
+	service       *ALSAccessPointLocationService
+	pending       []ALSRequesterSnapshot
+	hasDispatched bool
 }
 
 func NewALSCompletionDispatcher(service *ALSAccessPointLocationService) *ALSCompletionDispatcher {
@@ -162,10 +164,43 @@ func (d *ALSCompletionDispatcher) Flush(scan []ScanObservation, maxAPs int) (ALS
 		return ALSDispatchResult{}, err
 	}
 
+	d.hasDispatched = true
 	return ALSDispatchResult{
 		Event:                "Network::AlsFinished",
+		Cause:                "completed-requester",
 		CoalescedCompletions: len(requesters),
 		Requesters:           requesters,
+		CachedLocations:      d.service.Len(),
+		Outcome:              outcome,
+	}, nil
+}
+
+// ReevaluateCached models the repeated Network::AlsFinished passes observed
+// after the first completion-triggered dispatch. The trace shows the same
+// cached ALS result set being rematched against the current scan without a new
+// requesterDidFinish immediately beforehand.
+//
+// Re-evaluation is deliberately blocked while new completions are pending, and
+// before any completion-triggered dispatch has primed the cache.
+func (d *ALSCompletionDispatcher) ReevaluateCached(scan []ScanObservation, maxAPs int) (ALSDispatchResult, error) {
+	if len(d.pending) != 0 {
+		return ALSDispatchResult{}, errors.New("pending ALS completions must be flushed before cached re-evaluation")
+	}
+	if !d.hasDispatched {
+		return ALSDispatchResult{}, errors.New("ALS cache has not completed an initial dispatch")
+	}
+	if d.service.Len() == 0 {
+		return ALSDispatchResult{}, errors.New("ALS cache is empty")
+	}
+
+	outcome, err := EvaluateALSLifecycle(scan, d.service.Snapshot(), maxAPs)
+	if err != nil {
+		return ALSDispatchResult{}, err
+	}
+	return ALSDispatchResult{
+		Event:                "Network::AlsFinished",
+		Cause:                "cached-reevaluation",
+		CoalescedCompletions: 0,
 		CachedLocations:      d.service.Len(),
 		Outcome:              outcome,
 	}, nil

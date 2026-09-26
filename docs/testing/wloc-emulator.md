@@ -329,3 +329,26 @@ completed requesters into a single `Network::AlsFinished`-style re-evaluation of
 the current scan. The lab model can therefore reproduce both a successful fix
 and the observed `Network::AlsAllUnknown` path without calling private
 CoreLocation APIs or generating production Apple traffic.
+
+
+## ALS completion timing and cached re-evaluation
+
+Relative monotonic timestamps remain useful even when a single TraceV3 file
+cannot recover absolute wall-clock time. Across two independent captures, the
+first `Network::AlsFinished` pass usually follows the most recent
+`requesterDidFinish` by only a few tenths of a millisecond. One capture showed a
+median of about 0.44 ms (typical range ~0.15-0.67 ms); the other also had a
+~0.44 ms median, with occasional scheduler delays around 1-1.5 ms.
+
+Multiple requester completions can be coalesced before the provider runs. The
+captured examples include two completions separated by ~0.06 ms and four
+completions spread across ~2.76 ms. This does not look like a fixed-duration
+batch timer; the lab model therefore treats dispatch as deferred/coalescible
+rather than sleeping for a specific number of milliseconds.
+
+The traces also contain repeated `Network::AlsFinished` passes with no new
+`requesterDidFinish` immediately beforehand. Those passes reuse the same
+ALS-resolved AP set and re-evaluate the current scan. `ReevaluateCached` models
+that distinction explicitly: cached re-evaluation is allowed only after an
+initial completion-triggered dispatch and while no new completion remains
+pending.

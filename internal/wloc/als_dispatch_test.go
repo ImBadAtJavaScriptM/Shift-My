@@ -68,6 +68,7 @@ func TestALSCompletionDispatcherSingleCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.Event != "Network::AlsFinished" ||
+		result.Cause != "completed-requester" ||
 		result.CoalescedCompletions != 1 ||
 		len(result.Requesters) != 1 ||
 		result.Requesters[0].RequesterToken != 1310720 {
@@ -231,5 +232,66 @@ func TestALSCompletionDispatcherRejectsFlushWithoutCompletion(t *testing.T) {
 	}
 	if err.Error() != "no completed ALS requester is pending" {
 		t.Fatalf("error=%q", err)
+	}
+}
+
+func TestALSCompletionDispatcherCachedReevaluation(t *testing.T) {
+	service := NewALSAccessPointLocationService()
+	dispatcher := NewALSCompletionDispatcher(service)
+	device := DeviceLocation{
+		BSSID:              "02:00:00:00:00:01",
+		LatitudeE8:         3400940000,
+		LongitudeE8:        -11849730000,
+		HorizontalAccuracy: 20,
+	}
+	scan := []ScanObservation{{BSSID: device.BSSID, RSSI: -45}}
+
+	if _, err := dispatcher.ReevaluateCached(scan, DefaultWifiPositionMaxAPs); err == nil {
+		t.Fatal("expected cached re-evaluation to fail before initial dispatch")
+	}
+	if err := dispatcher.Complete(ALSCompletion{
+		Requester: ALSRequesterSnapshot{
+			RequesterToken:  2000001,
+			ProviderCode:    3636,
+			IssuedSerial:    81,
+			CompletedSerial: 78,
+			Lane:            2,
+		},
+		Response: []DeviceLocation{device},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dispatcher.ReevaluateCached(scan, DefaultWifiPositionMaxAPs); err == nil {
+		t.Fatal("expected cached re-evaluation to fail while a completion is pending")
+	}
+	first, err := dispatcher.Flush(scan, DefaultWifiPositionMaxAPs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Cause != "completed-requester" || first.Outcome.Resolution != "fix" {
+		t.Fatalf("first=%+v", first)
+	}
+
+	repeat, err := dispatcher.ReevaluateCached(scan, DefaultWifiPositionMaxAPs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeat.Event != "Network::AlsFinished" ||
+		repeat.Cause != "cached-reevaluation" ||
+		repeat.CoalescedCompletions != 0 ||
+		len(repeat.Requesters) != 0 ||
+		repeat.Outcome.Resolution != "fix" {
+		t.Fatalf("repeat=%+v", repeat)
+	}
+
+	unknown, err := dispatcher.ReevaluateCached(
+		[]ScanObservation{{BSSID: "02:00:00:00:00:02", RSSI: -40}},
+		DefaultWifiPositionMaxAPs,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unknown.Outcome.Resolution != "Network::AlsAllUnknown" {
+		t.Fatalf("unknown=%+v", unknown)
 	}
 }
