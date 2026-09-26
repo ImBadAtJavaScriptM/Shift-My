@@ -1,3 +1,5 @@
+[Reading 294 lines from start (total: 294 lines, 0 remaining)]
+
 # Controlled WLOC emulator
 
 Shift-My includes a lab-only WLOC codec and responder for validating the binary
@@ -215,31 +217,70 @@ not provide the live scan RSSI values needed by this model.
 ## Observed ALS requester lifecycle
 
 The unified-log traces show that the os_activity ID is useful for following a
-WifiPosition scan lifecycle, but it is not a stable network-request identifier.
-The same ALS requester can be issued under one activity and receive its network
-callbacks under another. The numeric requester token in the ALS tuple is the
-reliable correlation key across `queryLocation`, `didReceiveResponse`, and
-`requesterDidFinish`.
+WifiPosition execution context, but it is not a stable network-request
+identifier. The same ALS requester can be issued under one activity and receive
+its network callbacks under another. The opaque numeric requester token in the
+ALS tuple is the stronger correlation key across queryLocation / unifiedQuery,
+didReceiveResponse, and requesterDidFinish.
 
-A successful observed scan follows this shape:
+A successful observed lifecycle has this shape:
 
-1. a top-level WifiPosition activity is created when the Wi-Fi scan arrives;
-2. the activity carries BSSID/RSSI/channel data through Stage1/Stage2;
-3. unknown BSSIDs are logged as `notindb`;
-4. NetworkProvider issues a query and ALS performs `unifiedQuery`/`queryLocation`;
-5. the WLOC response is parsed and the requester emits `requesterDidFinish`;
-6. WifiPosition receives `Network::AlsFinished` and re-evaluates the live scan
-   against the accumulated ALS/tile state;
-7. usable overlap can produce `fix`; zero overlap can still receive
-   `Network::AlsFinished`, followed by `nofix` and `Network::AlsAllUnknown`.
+1. WifiPosition receives a live Wi-Fi scan and carries BSSID/RSSI/channel data
+   through its Stage1/Stage2 logic.
+2. NetworkProvider issues an ALS query; Network::AlsRequestResult is emitted
+   almost immediately after dispatch.
+3. CFNetwork completes the WLOC HTTP request asynchronously.
+4. ALS parses the response, emits didReceiveResponse, then requesterDidFinish.
+5. WifiPosition receives Network::AlsFinished and rematches the current scan
+   against ALS/tile state.
+6. Each scanned BSSID is classified as ALS-located, tile-located, unknown, or
+   not-in-db.
+7. Usable overlap can produce fix; zero overlap can still receive
+   Network::AlsFinished, followed by nofix and Network::AlsAllUnknown.
 
-Therefore `Network::AlsFinished` is modeled as requester completion/dispatch,
-not as proof of a successful location solve. The downstream overlap decision is
-separate. In the available successful traces the ALS summary repeatedly shows
-18 matched APs while total scan size changes (18/25=72%, 18/27=66%, 18/28=64%,
-18/31=58%, 18/37=48%, 18/40=45%). These samples do not establish that 18 is a
-hard minimum; they show a stable known-AP set in this environment.
+Therefore Network::AlsFinished means "the requester completed; rematch the
+current scan," not "a position fix is ready."
 
-`EvaluateALSLifecycle` captures only these observed post-requester semantics for
-lab testing. It does not create ALS requester objects, invoke private APIs, or
-trigger CoreLocation state transitions.
+### Observed timing
+
+The trace timebase is 24 MHz mach time. In one successful network cycle:
+
+- unifiedQuery -> Network::AlsRequestResult: about 55 microseconds;
+- request -> didReceiveResponse: about 1.02 seconds;
+- didReceiveResponse -> requesterDidFinish: about 0.97 ms;
+- requesterDidFinish -> Network::AlsFinished: about 53.5 ms;
+- Network::AlsFinished -> source classification: about 2.6 ms;
+- classification -> ALS result: about 1.45 ms;
+- ALS result -> fix: under 0.4 ms.
+
+In an all-unknown sample, requesterDidFinish -> Network::AlsFinished took about
+18.3 ms. The handler classified the scan, emitted nofix, and entered
+Network::AlsAllUnknown about 0.12 ms later. This strongly supports an in-memory
+async completion dispatch rather than a disk-watcher handoff.
+
+### Source classification
+
+The tilesals tuple is consistent with integer percentages of the current scan.
+Examples:
+
+- 72 | 0 | 24 | 4 on 25 scanned APs corresponds to 18 ALS-located, 0
+  tile-only, 6 unknown, and 1 not-in-db;
+- 74 | 0 | 25 | 0 on 27 scanned APs corresponds to 20 ALS-located, 0
+  tile-only, 7 unknown, and 0 not-in-db;
+- 0 | 0 | 0 | 100 is the all-not-in-db/no-fix path.
+
+A successful 20-location cycle also contains an internal 20 | 18 reduction and
+an ALS result whose leading count is 18. Later successful cycles repeatedly
+report 18 in the corresponding result record while total scan size changes.
+This suggests a private working set around 18 APs in these samples, but it does
+not establish Apple's exact rejection/weighting algorithm.
+
+EvaluateALSLifecycle models only the well-supported post-requester boundary. It
+reports scan totals, ALS-located count, response records without usable
+locations, not-returned BSSIDs, overlap percentages, an observed working-set
+hint of 18, and a lab outcome. It does not create ALS requester objects, invoke
+private APIs, emit private events, or alter Apple production traffic.
+
+The older strongest-16 centroid remains only a simple empirical position
+estimator. It fit two captured fixes closely, but the private trace records now
+show that CoreLocation's actual solver is more complex.

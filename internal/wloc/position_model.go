@@ -47,9 +47,11 @@ type matchedWifiObservation struct {
 //  3. retain at most the strongest maxAPs matches;
 //  4. return the arithmetic centroid of the retained AP coordinates.
 //
-// Across two captured live WifiPosition solves, maxAPs=16 reproduced the
-// observed fix to roughly 0.23 m and 1.08 m respectively. That makes this a
-// useful lab model, not a bit-for-bit reconstruction of CoreLocation.
+// maxAPs=16 was originally selected because it fit two captured fixes closely.
+// Later trace analysis exposed a private solver working-set record around 18
+// APs in successful cycles, confirming that the exact CoreLocation math is more
+// complex than this centroid approximation. Keep this helper as a deliberately
+// simple lab estimator; use EvaluateALSLifecycle for state/overlap analysis.
 func EstimateWifiPosition(scan []ScanObservation, response []DeviceLocation, maxAPs int) (WifiPositionEstimate, error) {
 	if maxAPs <= 0 {
 		maxAPs = DefaultWifiPositionMaxAPs
