@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 const DefaultRealisticRequestWifiRecords = 22
@@ -69,4 +70,27 @@ func appendBEString(dst []byte, value string) []byte {
 	binary.BigEndian.PutUint16(size[:], uint16(len(value)))
 	dst = append(dst, size[:]...)
 	return append(dst, value...)
+}
+
+const syntheticRequestBSSIDPrefix = "02:54:4d:"
+
+// SyntheticScanObservations returns the deterministic scan-strength fixture
+// paired with BuildSyntheticStructuredRequestFixture. It refuses arbitrary
+// BSSIDs so server-side position estimates are emitted only when the RSSI
+// values are known by construction.
+func SyntheticScanObservations(bssids []string) ([]ScanObservation, bool) {
+	if len(bssids) == 0 {
+		return nil, false
+	}
+	scan := make([]ScanObservation, 0, len(bssids))
+	for i, bssid := range bssids {
+		if !strings.HasPrefix(strings.ToLower(bssid), syntheticRequestBSSIDPrefix) {
+			return nil, false
+		}
+		scan = append(scan, ScanObservation{
+			BSSID: bssid,
+			RSSI:  -35 - i*2,
+		})
+	}
+	return scan, true
 }

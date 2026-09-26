@@ -186,3 +186,27 @@ same target.
 
 The model is a test harness only. It does not inject data into `locationd`,
 trigger `Network::AlsFinished`, or alter Apple production traffic.
+
+
+## Empirical WifiPosition model
+
+The controlled lab includes a post-ALS position estimator for studying the
+`Network::AlsFinished -> WifiPosition` stage without modifying iOS. It is
+deliberately labeled empirical rather than an implementation of Apple's private
+positioning algorithm.
+
+The current model:
+
+1. deduplicates the live scan by BSSID, retaining the strongest RSSI;
+2. joins scan BSSIDs against WLOC response entries with usable locations;
+3. sorts matched APs by RSSI and retains at most the strongest 16;
+4. returns the arithmetic centroid of those AP coordinates.
+
+On the captured iOS 26.6.2 live solve where 25 scanned APs became 18 usable ALS
+matches, the 16-AP model estimates `34.19875693,-118.31677770`, about 0.23 m
+from CoreLocation's logged `34.19875503,-118.31677865` result.
+
+Server-side `wloc_event` estimates are emitted only for the deterministic
+synthetic request fixture, where scan RSSIs are known by construction. Arbitrary
+requests do not receive a modeled estimate because the WLOC request alone does
+not provide the live scan RSSI values needed by this model.

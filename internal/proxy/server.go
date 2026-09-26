@@ -205,20 +205,37 @@ func (s *Server) serveWLOC(w http.ResponseWriter, r *http.Request, host string) 
 		http.Error(w, "record lab TLS activity", http.StatusInternalServerError)
 		return
 	}
+
+	estimate := wloc.WifiPositionEstimate{}
+	if scan, ok := wloc.SyntheticScanObservations(req.BSSIDs); ok {
+		if _, _, devices, parseErr := wloc.ParseResponse(payload); parseErr == nil {
+			if modeled, modelErr := wloc.EstimateWifiPosition(scan, devices, wloc.DefaultWifiPositionMaxAPs); modelErr == nil {
+				estimate = modeled
+			}
+		}
+	}
+
 	logWLOCEvent(wlocEvent{
-		Timestamp:        time.Now().UTC().Format(time.RFC3339Nano),
-		Host:             host,
-		Path:             r.URL.Path,
-		Mode:             mode,
-		Envelope:         req.Envelope,
-		FunctionID:       req.FunctionID,
-		RequestBytes:     len(body),
-		RequestBSSIDs:    len(req.BSSIDs),
-		ResponseBytes:    len(payload),
-		PatchedWifi:      patchStats.Wifi,
-		PatchedCell:      patchStats.Cell,
-		PatchedLocations: patchStats.Locations,
-		TargetRevision:   inst.LocationRevision,
+		Timestamp:            time.Now().UTC().Format(time.RFC3339Nano),
+		Host:                 host,
+		Path:                 r.URL.Path,
+		Mode:                 mode,
+		Envelope:             req.Envelope,
+		FunctionID:           req.FunctionID,
+		RequestBytes:         len(body),
+		RequestBSSIDs:        len(req.BSSIDs),
+		ResponseBytes:        len(payload),
+		PatchedWifi:          patchStats.Wifi,
+		PatchedCell:          patchStats.Cell,
+		PatchedLocations:     patchStats.Locations,
+		TargetRevision:       inst.LocationRevision,
+		EstimateModel:        estimate.Method,
+		EstimateLatitude:     estimate.Latitude,
+		EstimateLongitude:    estimate.Longitude,
+		EstimateMatched:      estimate.MatchedAPs,
+		EstimateUsed:         estimate.UsedAPs,
+		EstimateUnresolved:   estimateUnresolved(len(req.BSSIDs), estimate),
+		EstimateSpreadMeters: estimate.SpreadMeters,
 	})
 
 	responseHeaders := make(http.Header)
@@ -261,19 +278,37 @@ func normalizeHost(host string) string {
 }
 
 type wlocEvent struct {
-	Timestamp        string `json:"timestamp"`
-	Host             string `json:"host"`
-	Path             string `json:"path"`
-	Mode             string `json:"mode"`
-	Envelope         string `json:"envelope"`
-	FunctionID       uint32 `json:"function_id"`
-	RequestBytes     int    `json:"request_bytes"`
-	RequestBSSIDs    int    `json:"request_bssids"`
-	ResponseBytes    int    `json:"response_bytes"`
-	PatchedWifi      int    `json:"patched_wifi"`
-	PatchedCell      int    `json:"patched_cell"`
-	PatchedLocations int    `json:"patched_locations"`
-	TargetRevision   int64  `json:"target_revision"`
+	Timestamp            string  `json:"timestamp"`
+	Host                 string  `json:"host"`
+	Path                 string  `json:"path"`
+	Mode                 string  `json:"mode"`
+	Envelope             string  `json:"envelope"`
+	FunctionID           uint32  `json:"function_id"`
+	RequestBytes         int     `json:"request_bytes"`
+	RequestBSSIDs        int     `json:"request_bssids"`
+	ResponseBytes        int     `json:"response_bytes"`
+	PatchedWifi          int     `json:"patched_wifi"`
+	PatchedCell          int     `json:"patched_cell"`
+	PatchedLocations     int     `json:"patched_locations"`
+	TargetRevision       int64   `json:"target_revision"`
+	EstimateModel        string  `json:"estimate_model,omitempty"`
+	EstimateLatitude     float64 `json:"estimate_latitude,omitempty"`
+	EstimateLongitude    float64 `json:"estimate_longitude,omitempty"`
+	EstimateMatched      int     `json:"estimate_matched,omitempty"`
+	EstimateUsed         int     `json:"estimate_used,omitempty"`
+	EstimateUnresolved   int     `json:"estimate_unresolved,omitempty"`
+	EstimateSpreadMeters float64 `json:"estimate_spread_meters,omitempty"`
+}
+
+func estimateUnresolved(total int, estimate wloc.WifiPositionEstimate) int {
+	if estimate.Method == "" {
+		return 0
+	}
+	unresolved := total - estimate.MatchedAPs
+	if unresolved < 0 {
+		return 0
+	}
+	return unresolved
 }
 
 func logWLOCEvent(event wlocEvent) {
