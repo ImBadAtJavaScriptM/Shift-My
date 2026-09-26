@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const DefaultWifiPositionMaxAPs = 16
+const DefaultWifiPositionMaxAPs = 18
 
 var ErrNoUsableBSSIDOverlap = errors.New("scan and response have no usable BSSID overlap")
 
@@ -47,11 +47,12 @@ type matchedWifiObservation struct {
 //  3. retain at most the strongest maxAPs matches;
 //  4. return the arithmetic centroid of the retained AP coordinates.
 //
-// maxAPs=16 was originally selected because it fit two captured fixes closely.
-// Later trace analysis exposed a private solver working-set record around 18
-// APs in successful cycles, confirming that the exact CoreLocation math is more
-// complex than this centroid approximation. Keep this helper as a deliberately
-// simple lab estimator; use EvaluateALSLifecycle for state/overlap analysis.
+// Trace analysis across multiple successful cycles shows a hard working-set
+// cap of 18 ALS-located APs, with over-cap samples retaining the strongest RSSI
+// observations. The later CoreLocation coordinate weighting/fusion math remains
+// private, so this helper deliberately uses a simple centroid after the
+// trace-backed selection stage. Use EvaluateALSLifecycle for state/overlap
+// analysis.
 func EstimateWifiPosition(scan []ScanObservation, response []DeviceLocation, maxAPs int) (WifiPositionEstimate, error) {
 	if maxAPs <= 0 {
 		maxAPs = DefaultWifiPositionMaxAPs

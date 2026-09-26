@@ -23,6 +23,8 @@ type ALSLifecycleOutcome struct {
 	HasUsableOverlap        bool
 	ObservedWorkingSetHint  int
 	CandidateWorkingSet     int
+	RejectedByWorkingSetCap int
+	WorkingSetPercent       int
 	Estimate                *WifiPositionEstimate
 }
 
@@ -60,8 +62,10 @@ func EvaluateALSLifecycle(scan []ScanObservation, response []DeviceLocation, max
 		CandidateWorkingSet:     classification.ALSLocated,
 	}
 	if outcome.CandidateWorkingSet > ObservedALSWorkingSetHint {
+		outcome.RejectedByWorkingSetCap = outcome.CandidateWorkingSet - ObservedALSWorkingSetHint
 		outcome.CandidateWorkingSet = ObservedALSWorkingSetHint
 	}
+	outcome.WorkingSetPercent = roundedPercent(outcome.CandidateWorkingSet, outcome.TotalScan)
 	if !outcome.HasUsableOverlap {
 		return outcome, nil
 	}

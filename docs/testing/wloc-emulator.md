@@ -171,18 +171,21 @@ APIs. The model:
 
 1. deduplicates the live scan by BSSID, retaining the strongest RSSI;
 2. matches scan BSSIDs against response records with usable locations;
-3. sorts matches by RSSI and retains at most the strongest 16;
+3. sorts matches by RSSI and retains at most the strongest 18;
 4. computes the arithmetic centroid of the retained AP locations.
 
 This is intentionally described as an empirical approximation rather than
-Apple's exact proprietary positioning algorithm. Against two captured live
-WifiPosition solves, the strongest-16 centroid was approximately 0.23 m and
-1.08 m from the corresponding CoreLocation Wi-Fi fixes. More complicated
-inverse-accuracy weighting made those two samples worse.
+Apple's exact proprietary positioning algorithm. Trace analysis across 15
+successful cycles shows a hard working-set cap of 18 ALS-located APs: when 20,
+21, or 25 usable candidates are present, the corresponding result records use
+18 and reject 2, 3, or 7 respectively; when only 18 candidates are present,
+all 18 are retained. The rejected entries are the weakest RSSI observations in
+those over-cap samples. The arithmetic centroid remains only a simple lab
+approximation of the later private weighting/fusion stage.
 
 The controlled 22-BSSID / 114-record `patch-rich` fixture is also covered by an
 integration test: all 22 request BSSIDs match valid response locations, the
-strongest 16 are selected, and the model resolves exactly to the selected lab
+strongest 18 are selected, and the model resolves exactly to the selected lab
 coordinate because all coordinate-bearing response entries were patched to the
 same target.
 
@@ -201,12 +204,14 @@ The current model:
 
 1. deduplicates the live scan by BSSID, retaining the strongest RSSI;
 2. joins scan BSSIDs against WLOC response entries with usable locations;
-3. sorts matched APs by RSSI and retains at most the strongest 16;
+3. sorts matched APs by RSSI and retains at most the strongest 18;
 4. returns the arithmetic centroid of those AP coordinates.
 
-On the captured iOS 26.6.2 live solve where 25 scanned APs became 18 usable ALS
-matches, the 16-AP model estimates `34.19875693,-118.31677770`, about 0.23 m
-from CoreLocation's logged `34.19875503,-118.31677865` result.
+The selection stage is trace-backed; the final coordinate solver is not. The
+private logs show a later 2.4GHz / stage1+5GHz fusion stage and additional
+unlabeled numeric weights. Because those weights are not publicly documented,
+the lab model deliberately keeps a simple centroid rather than claiming to
+reproduce Apple's exact final solve.
 
 Server-side `wloc_event` estimates are emitted only for the deterministic
 synthetic request fixture, where scan RSSIs are known by construction. Arbitrary
@@ -269,11 +274,13 @@ Examples:
   tile-only, 7 unknown, and 0 not-in-db;
 - 0 | 0 | 0 | 100 is the all-not-in-db/no-fix path.
 
-A successful 20-location cycle also contains an internal 20 | 18 reduction and
-an ALS result whose leading count is 18. Later successful cycles repeatedly
-report 18 in the corresponding result record while total scan size changes.
-This suggests a private working set around 18 APs in these samples, but it does
-not establish Apple's exact rejection/weighting algorithm.
+The working-set behavior is consistent across the parsed successful cycles.
+Observed usable-candidate counts of 18, 20, 21, and 25 map to selected counts of
+18, 18, 18, and 18, with rejected counts of 0, 2, 3, and 7. Comparing the
+candidate RSSIs shows that the over-cap samples retain the strongest 18. This
+establishes the observed selection rule for these captures, while the later
+coordinate weighting/fusion algorithm remains private and only partially
+decoded.
 
 EvaluateALSLifecycle models only the well-supported post-requester boundary. It
 reports scan totals, ALS-located count, response records without usable
@@ -281,6 +288,6 @@ locations, not-returned BSSIDs, overlap percentages, an observed working-set
 hint of 18, and a lab outcome. It does not create ALS requester objects, invoke
 private APIs, emit private events, or alter Apple production traffic.
 
-The older strongest-16 centroid remains only a simple empirical position
-estimator. It fit two captured fixes closely, but the private trace records now
-show that CoreLocation's actual solver is more complex.
+The strongest-18 centroid remains only a simple empirical position estimator.
+The private trace records show that CoreLocation applies additional weighting
+and a 2.4 GHz / 5 GHz fusion stage after selection.

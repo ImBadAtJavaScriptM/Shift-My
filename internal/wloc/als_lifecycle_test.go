@@ -48,7 +48,9 @@ func TestEvaluateALSLifecycleFixAfterCompletedRequester(t *testing.T) {
 	}
 	if !outcome.HasUsableOverlap ||
 		outcome.ObservedWorkingSetHint != ObservedALSWorkingSetHint ||
-		outcome.CandidateWorkingSet != ObservedALSWorkingSetHint {
+		outcome.CandidateWorkingSet != ObservedALSWorkingSetHint ||
+		outcome.RejectedByWorkingSetCap != 4 ||
+		outcome.WorkingSetPercent != 82 {
 		t.Fatalf("outcome=%+v", outcome)
 	}
 	if outcome.Estimate == nil {
@@ -86,7 +88,9 @@ func TestEvaluateALSLifecycleAllUnknownAfterCompletedRequester(t *testing.T) {
 		outcome.ALSLocatedPercent != 0 ||
 		outcome.MissingPercent != 100 ||
 		outcome.HasUsableOverlap ||
-		outcome.CandidateWorkingSet != 0 {
+		outcome.CandidateWorkingSet != 0 ||
+		outcome.RejectedByWorkingSetCap != 0 ||
+		outcome.WorkingSetPercent != 0 {
 		t.Fatalf("outcome=%+v", outcome)
 	}
 }
