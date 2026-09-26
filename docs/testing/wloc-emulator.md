@@ -451,3 +451,10 @@ Reported CoreLocation vertical accuracy is deliberately not modeled by this help
 Across 27 completion-driven dispatches in the two parsed genuine traces, the delay from the most recent `requesterDidFinish` to the following `Network::AlsFinished` had a median of about 18.27 ms. Multi-completion batches had last-completion delays between about 12.5 ms and 19.7 ms. One observed three-completion batch spanned about 53.5 ms from the first completion to dispatch but only about 18.9 ms from the last completion.
 
 Single-completion paths are noisier (roughly 6-28 ms in the main cluster, with a small number of longer scheduler outliers). The evidence therefore supports a short deferred/coalesced dispatch, but not a precisely recovered fixed debounce interval. The lab dispatcher intentionally leaves scheduling external rather than claiming an exact private timer.
+
+
+### Cached reevaluation trigger
+
+The repeated `Network::AlsFinished` passes with no new requester completion are strongly tied to WifiPosition provider requests rather than fresh radio scans. Across 33 checked cached dispatches in the two genuine traces, every dispatch was preceded within 1-5 log records by `WifiPosition Request, type, none`. These passes occur under both lowPriority=yes and lowPriority=no.
+
+Many of those reevaluations reuse the exact same Wi-Fi `scanTime` for several seconds while provider/location timestamps advance. Therefore a new physical Wi-Fi scan is not required. The best trace-backed model is: provider request -> reevaluate the current scan snapshot against the cached ALS/tile state -> emit another `Network::AlsFinished` result. `ReevaluateCached` intentionally models this request-driven reuse without inventing a private timer.
