@@ -9,6 +9,14 @@ import (
 
 const DefaultWifiPositionMaxAPs = 18
 
+// Empirical weighting constants fitted across distinct successful WifiPosition
+// cycles and validated against a separate capture. They describe the lab model,
+// not Apple's private implementation.
+const (
+	empiricalWifiRSSIScale        = 0.009
+	empiricalWifiAccuracyExponent = 0.35
+)
+
 var ErrNoUsableBSSIDOverlap = errors.New("scan and response have no usable BSSID overlap")
 
 // ScanObservation models the part of a live Wi-Fi scan that the empirical
@@ -34,10 +42,11 @@ type WifiPositionEstimate struct {
 }
 
 type matchedWifiObservation struct {
-	BSSID     string
-	RSSI      int
-	Latitude  float64
-	Longitude float64
+	BSSID              string
+	RSSI               int
+	Latitude           float64
+	Longitude          float64
+	HorizontalAccuracy float64
 }
 
 // EstimateWifiPosition approximates the post-ALS Wi-Fi solve seen in the
@@ -45,14 +54,14 @@ type matchedWifiObservation struct {
 //  1. deduplicate the live scan, keeping the strongest observation per BSSID;
 //  2. match scan BSSIDs against response records that contain usable locations;
 //  3. retain at most the strongest maxAPs matches;
-//  4. return the arithmetic centroid of the retained AP coordinates.
+//  4. compute a mild RSSI + horizontal-accuracy weighted centroid.
 //
 // Trace analysis across multiple successful cycles shows a hard working-set
 // cap of 18 ALS-located APs, with over-cap samples retaining the strongest RSSI
-// observations. The later CoreLocation coordinate weighting/fusion math remains
-// private, so this helper deliberately uses a simple centroid after the
-// trace-backed selection stage. Use EvaluateALSLifecycle for state/overlap
-// analysis.
+// observations. The weighting below is an empirical approximation fitted on
+// distinct live cycles and validated against a separate capture; it is not a
+// claim about Apple's private implementation. Use EvaluateALSLifecycle for
+// state/overlap analysis.
 func EstimateWifiPosition(scan []ScanObservation, response []DeviceLocation, maxAPs int) (WifiPositionEstimate, error) {
 	if maxAPs <= 0 {
 		maxAPs = DefaultWifiPositionMaxAPs
@@ -91,11 +100,15 @@ func EstimateWifiPosition(scan []ScanObservation, response []DeviceLocation, max
 		if !ok {
 			continue
 		}
+		if device.HorizontalAccuracy <= 0 {
+			continue
+		}
 		matches = append(matches, matchedWifiObservation{
-			BSSID:     observation.BSSID,
-			RSSI:      observation.RSSI,
-			Latitude:  float64(device.LatitudeE8) / 1e8,
-			Longitude: float64(device.LongitudeE8) / 1e8,
+			BSSID:              observation.BSSID,
+			RSSI:               observation.RSSI,
+			Latitude:           float64(device.LatitudeE8) / 1e8,
+			Longitude:          float64(device.LongitudeE8) / 1e8,
+			HorizontalAccuracy: float64(device.HorizontalAccuracy),
 		})
 	}
 	if len(matches) == 0 {
@@ -114,13 +127,15 @@ func EstimateWifiPosition(scan []ScanObservation, response []DeviceLocation, max
 		used = used[:maxAPs]
 	}
 
-	var latitude, longitude float64
+	var latitude, longitude, totalWeight float64
 	for _, match := range used {
-		latitude += match.Latitude
-		longitude += match.Longitude
+		weight := empiricalWifiPositionWeight(match)
+		latitude += match.Latitude * weight
+		longitude += match.Longitude * weight
+		totalWeight += weight
 	}
-	latitude /= float64(len(used))
-	longitude /= float64(len(used))
+	latitude /= totalWeight
+	longitude /= totalWeight
 
 	spread := 0.0
 	for _, match := range used {
@@ -139,8 +154,17 @@ func EstimateWifiPosition(scan []ScanObservation, response []DeviceLocation, max
 		StrongestRSSI:   used[0].RSSI,
 		WeakestUsedRSSI: used[len(used)-1].RSSI,
 		SpreadMeters:    spread,
-		Method:          "empirical-strongest-centroid",
+		Method:          "empirical-top18-rssi-accuracy-weighted",
 	}, nil
+}
+
+func empiricalWifiPositionWeight(match matchedWifiObservation) float64 {
+	// Shifting RSSI by +100 only improves numerical readability; because the
+	// shift contributes the same multiplicative constant to every observation,
+	// it does not change the normalized weighted centroid.
+	signal := math.Exp(empiricalWifiRSSIScale * float64(match.RSSI+100))
+	accuracy := math.Pow(match.HorizontalAccuracy, empiricalWifiAccuracyExponent)
+	return signal / accuracy
 }
 
 func usableWifiLocation(device DeviceLocation) bool {

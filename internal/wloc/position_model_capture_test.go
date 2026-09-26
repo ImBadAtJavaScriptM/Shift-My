@@ -1,6 +1,9 @@
 package wloc
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestEstimateWifiPositionCapsAtStrongestEighteen(t *testing.T) {
 	scan := make([]ScanObservation, 0, 20)
@@ -35,7 +38,7 @@ func TestEstimateWifiPositionCapsAtStrongestEighteen(t *testing.T) {
 	if got.MatchedAPs != 20 || got.UsedAPs != 18 {
 		t.Fatalf("matched=%d used=%d", got.MatchedAPs, got.UsedAPs)
 	}
-	if got.Latitude != 34 || got.Longitude != -118 {
+	if math.Abs(got.Latitude-34) > 1e-10 || math.Abs(got.Longitude-(-118)) > 1e-10 {
 		t.Fatalf("estimate=(%.8f, %.8f)", got.Latitude, got.Longitude)
 	}
 	if got.WeakestUsedRSSI != -47 {

@@ -53,7 +53,7 @@ func TestEstimateWifiPositionPatchRichIntegration(t *testing.T) {
 	if estimate.SpreadMeters > 0.001 {
 		t.Fatalf("spread=%f want approximately zero", estimate.SpreadMeters)
 	}
-	if estimate.Method != "empirical-strongest-centroid" {
+	if estimate.Method != "empirical-top18-rssi-accuracy-weighted" {
 		t.Fatalf("method=%q", estimate.Method)
 	}
 }

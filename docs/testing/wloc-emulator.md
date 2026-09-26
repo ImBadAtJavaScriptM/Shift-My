@@ -291,3 +291,41 @@ private APIs, emit private events, or alter Apple production traffic.
 The strongest-18 centroid remains only a simple empirical position estimator.
 The private trace records show that CoreLocation applies additional weighting
 and a 2.4 GHz / 5 GHz fusion stage after selection.
+
+
+## Trace-validated horizontal solver approximation
+
+Further analysis across successful `WifiPosition` cycles shows that the horizontal
+ALS working set is capped at 18 APs. Observed examples include 18 candidates ->
+18 used, 20 -> 18, 21 -> 18, and 25 -> 18. When the candidate set exceeds 18,
+the retained set follows the strongest RSSI observations; there is no fixed RSSI
+floor because very weak APs remain when the candidate set is already at or below
+18.
+
+After that trace-backed selection stage, the lab estimator uses a deliberately
+mild empirical weight:
+
+`weight = exp(0.009 * (RSSI + 100)) / horizontal_accuracy^0.35`
+
+The +100 RSSI shift is normalization-only and cancels out after weights are
+normalized. The weighting law is not claimed to be Apple's private formula.
+It was fitted on distinct successful cycles from one parsed trace and validated
+against a separate capture. The held-out capture remained sub-meter across the
+observed successful cycles, while the trace-backed 18-AP selection rule held in
+both captures.
+
+Two anonymized regression fixtures preserve relative AP geometry, RSSI, and
+horizontal accuracy from independent captures while replacing all BSSIDs and
+translating the coordinate frame. They verify both an 18-candidate/no-drop case
+and a 20-candidate/top-18 case without storing the original network identifiers
+or physical coordinates.
+
+## Deferred ALS completion dispatch model
+
+`ALSCompletionDispatcher` models the asynchronous boundary suggested by the
+trace: parsed `requesterDidFinish` completions merge into a shared in-memory AP
+location service and mark work pending. A later `Flush` coalesces one or more
+completed requesters into a single `Network::AlsFinished`-style re-evaluation of
+the current scan. The lab model can therefore reproduce both a successful fix
+and the observed `Network::AlsAllUnknown` path without calling private
+CoreLocation APIs or generating production Apple traffic.
