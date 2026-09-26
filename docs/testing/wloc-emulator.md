@@ -486,3 +486,24 @@ A stronger recurrence is visible in the internal confidence-state rows. Across a
 Every subsequent positive-measurement row then satisfies the inverse-variance update above to floating-point precision. The observed epoch/base timestamp changes therefore do not reset the scalar vertical variance in these captures.
 
 `InitializeVerticalConfidence`, `PredictVerticalConfidence`, and `StepVerticalConfidence` model this trace-supported scalar recurrence. A second private constant (`0.0005`) is present alongside the `0.02` coefficient in the internal rows, but its role is not required for this recovered scalar variance recurrence and remains intentionally unmodeled.
+
+
+### Complete scalar altitude state
+
+The same internal rows expose the altitude mean update, not just its variance. The observed recurrence is consistent with a scalar Kalman-style filter:
+
+`predictedAltitude = previousAltitude`
+
+`predictedVariance = previousVariance + 0.02 * dt^2`
+
+`R = (1.7 * rawVerticalSigma)^2`
+
+`K = predictedVariance / (predictedVariance + R)`
+
+`posteriorAltitude = predictedAltitude + K * (measurementAltitude - predictedAltitude)`
+
+`posteriorVariance = (1 - K) * predictedVariance`
+
+Across the decoded rows, the predicted altitude equals the immediately previous posterior altitude exactly, and solving the hidden measurement altitude backward from the posterior produces stable repeated measurement values within each provider burst to numerical precision. The private epoch/base timestamp can change without breaking state continuity.
+
+`VerticalState` and `StepVerticalState` model this trace-supported scalar altitude state only. The additional private constant `0.0005` visible in the same internal rows is not needed to reproduce either the visible altitude mean or variance recurrence and remains intentionally unresolved.
