@@ -172,7 +172,8 @@ APIs. The model:
 1. deduplicates the live scan by BSSID, retaining the strongest RSSI;
 2. matches scan BSSIDs against response records with usable locations;
 3. sorts matches by RSSI and retains at most the strongest 18;
-4. computes the arithmetic centroid of the retained AP locations.
+4. applies the cross-validated empirical RSSI/horizontal-accuracy weighting
+   described below.
 
 This is intentionally described as an empirical approximation rather than
 Apple's exact proprietary positioning algorithm. Trace analysis across 15
@@ -180,8 +181,8 @@ successful cycles shows a hard working-set cap of 18 ALS-located APs: when 20,
 21, or 25 usable candidates are present, the corresponding result records use
 18 and reject 2, 3, or 7 respectively; when only 18 candidates are present,
 all 18 are retained. The rejected entries are the weakest RSSI observations in
-those over-cap samples. The arithmetic centroid remains only a simple lab
-approximation of the later private weighting/fusion stage.
+those over-cap samples. The later weighting remains empirical rather than a
+claim about Apple's private fusion formula.
 
 The controlled 22-BSSID / 114-record `patch-rich` fixture is also covered by an
 integration test: all 22 request BSSIDs match valid response locations, the
@@ -205,13 +206,14 @@ The current model:
 1. deduplicates the live scan by BSSID, retaining the strongest RSSI;
 2. joins scan BSSIDs against WLOC response entries with usable locations;
 3. sorts matched APs by RSSI and retains at most the strongest 18;
-4. returns the arithmetic centroid of those AP coordinates.
+4. applies a mild empirical RSSI/horizontal-accuracy weighting to the selected
+   AP coordinates.
 
-The selection stage is trace-backed; the final coordinate solver is not. The
-private logs show a later 2.4GHz / stage1+5GHz fusion stage and additional
-unlabeled numeric weights. Because those weights are not publicly documented,
-the lab model deliberately keeps a simple centroid rather than claiming to
-reproduce Apple's exact final solve.
+The selection stage is trace-backed; the final coordinate solver is only
+empirically approximated. The private logs show later 2.4GHz / stage1+5GHz
+fusion state and additional unlabeled numeric values. The current weighting was
+cross-validated against a separate capture and remains sub-meter there, but is
+not claimed to reproduce Apple's exact private solve.
 
 Server-side `wloc_event` estimates are emitted only for the deterministic
 synthetic request fixture, where scan RSSIs are known by construction. Arbitrary
@@ -397,8 +399,13 @@ solver.
 
 The empirical RSSI/accuracy weighting therefore models the observable horizontal
 solve well but should not be treated as an exact reconstruction. The private
-logs also expose band/stage labels such as `2.4GHz`, `stage1+5GHz`, and
-`placebad`; their exact proprietary meanings remain unresolved.
+logs also expose band/stage labels such as `2.4GHz`, `stage1+5GHz`,
+`stage2+5GHz`, and `placebad`. Across the checked successful cycles, the
+retained working set stayed effectively 17 2.4-GHz APs plus one 5-GHz AP while
+the second-stage label changed from a stage+5GHz form to plain `2.4GHz`.
+Therefore these strings are not modeled as a simple channel-count selector;
+they more likely expose acquisition/fusion phase or other private state. Their
+exact proprietary meanings remain unresolved.
 
 
 ## Decoded `tilesals` source tuple
@@ -436,4 +443,11 @@ Observed behavior across the parsed captures is consistent with:
 
 Restricting validation to type-4/Wi-Fi outputs produced 44 visible cycles across two captures. The approximation had about 0.08 m mean absolute error, about 0.087 m median error, and about 0.22 m worst-case error. A previously apparent multi-meter miss was a later type-1/GPS fusion result and is not part of the instantaneous Wi-Fi vertical solve.
 
-Reported CoreLocation vertical accuracy is deliberately not modeled by this helper. In the traces it evolves across repeated provider passes and can differ substantially from the instantaneous AP-derived altitude stage.
+Reported CoreLocation vertical accuracy is deliberately not modeled by this helper. In the traces it evolves across repeated provider passes and can differ substantially from the instantaneous AP-derived altitude stage. Identical candidate sets can keep essentially the same altitude while the reported vertical accuracy contracts across later cached reevaluations (for example 13.8 -> 7.3 -> 4.7 -> 3.0 m, then continuing near 2 m). That confidence therefore appears to include temporal/fusion state beyond one WLOC response.
+
+
+### Aggregate ALS completion-dispatch timing
+
+Across 27 completion-driven dispatches in the two parsed genuine traces, the delay from the most recent `requesterDidFinish` to the following `Network::AlsFinished` had a median of about 18.27 ms. Multi-completion batches had last-completion delays between about 12.5 ms and 19.7 ms. One observed three-completion batch spanned about 53.5 ms from the first completion to dispatch but only about 18.9 ms from the last completion.
+
+Single-completion paths are noisier (roughly 6-28 ms in the main cluster, with a small number of longer scheduler outliers). The evidence therefore supports a short deferred/coalesced dispatch, but not a precisely recovered fixed debounce interval. The lab dispatcher intentionally leaves scheduling external rather than claiming an exact private timer.
