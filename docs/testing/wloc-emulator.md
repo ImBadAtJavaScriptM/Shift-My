@@ -463,3 +463,18 @@ Many of those reevaluations reuse the exact same Wi-Fi `scanTime` for several se
 ### Tile-source observation
 
 Across all 108 decoded `tilesals` tuples in the two parsed captures, the second field (tile-only percentage) is 0. The ALS-located, unknown, and not-in-db fields vary substantially, but no current scan in these captures shows a distinct tile-only contribution. `CLTileFile` activity is still present elsewhere in the trace, so this does not mean the tile subsystem is unused globally; it only means the observed current-scan source classification never needed a tile-only bucket. This strengthens the lab model's current choice to leave tile-only contribution at zero until a controlled capture proves otherwise.
+
+
+### Vertical confidence update
+
+The trace-exposed Wi-Fi vertical measurement stage also reveals a repeatable confidence update. Across 26 visible measurement updates in the two genuine captures, the measurement variance is exactly consistent with inflating the instantaneous AP-derived vertical sigma by 1.7x before fusion:
+
+`measurementSigma = 1.7 * rawVerticalSigma`
+
+`R = measurementSigma^2`
+
+For ordinary consecutive updates, the posterior variance follows the scalar inverse-variance update:
+
+`Ppost = 1 / (1/Pprior + 1/R)`
+
+The 1.7 factor matches all 26 decoded updates to double precision. Some later transitions do not fuse directly from the immediately preceding posterior; those windows also expose evidence of prediction/process-noise or reset behavior. `FuseVerticalConfidence` therefore accepts the prior variance explicitly and models only the trace-supported measurement-update step. It does not claim to recover CoreLocation's private prior initialization, prediction noise, or reset logic.
