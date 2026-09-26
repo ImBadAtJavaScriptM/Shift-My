@@ -458,3 +458,8 @@ Single-completion paths are noisier (roughly 6-28 ms in the main cluster, with a
 The repeated `Network::AlsFinished` passes with no new requester completion are strongly tied to WifiPosition provider requests rather than fresh radio scans. Across 33 checked cached dispatches in the two genuine traces, every dispatch was preceded within 1-5 log records by `WifiPosition Request, type, none`. These passes occur under both lowPriority=yes and lowPriority=no.
 
 Many of those reevaluations reuse the exact same Wi-Fi `scanTime` for several seconds while provider/location timestamps advance. Therefore a new physical Wi-Fi scan is not required. The best trace-backed model is: provider request -> reevaluate the current scan snapshot against the cached ALS/tile state -> emit another `Network::AlsFinished` result. `ReevaluateCached` intentionally models this request-driven reuse without inventing a private timer.
+
+
+### Tile-source observation
+
+Across all 108 decoded `tilesals` tuples in the two parsed captures, the second field (tile-only percentage) is 0. The ALS-located, unknown, and not-in-db fields vary substantially, but no current scan in these captures shows a distinct tile-only contribution. `CLTileFile` activity is still present elsewhere in the trace, so this does not mean the tile subsystem is unused globally; it only means the observed current-scan source classification never needed a tile-only bucket. This strengthens the lab model's current choice to leave tile-only contribution at zero until a controlled capture proves otherwise.
