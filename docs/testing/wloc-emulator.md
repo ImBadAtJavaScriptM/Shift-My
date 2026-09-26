@@ -159,3 +159,30 @@ raw BSSID values:
 
 This makes future iPhone sysdiagnoses easy to correlate with server-side events
 without logging raw scan identifiers.
+
+
+## Empirical WifiPosition lab model
+
+`EstimateWifiPosition` models the post-ALS handoff observed after
+`Network::AlsFinished` without attempting to call or hook private CoreLocation
+APIs. The model:
+
+1. deduplicates the live scan by BSSID, retaining the strongest RSSI;
+2. matches scan BSSIDs against response records with usable locations;
+3. sorts matches by RSSI and retains at most the strongest 16;
+4. computes the arithmetic centroid of the retained AP locations.
+
+This is intentionally described as an empirical approximation rather than
+Apple's exact proprietary positioning algorithm. Against two captured live
+WifiPosition solves, the strongest-16 centroid was approximately 0.23 m and
+1.08 m from the corresponding CoreLocation Wi-Fi fixes. More complicated
+inverse-accuracy weighting made those two samples worse.
+
+The controlled 22-BSSID / 114-record `patch-rich` fixture is also covered by an
+integration test: all 22 request BSSIDs match valid response locations, the
+strongest 16 are selected, and the model resolves exactly to the selected lab
+coordinate because all coordinate-bearing response entries were patched to the
+same target.
+
+The model is a test harness only. It does not inject data into `locationd`,
+trigger `Network::AlsFinished`, or alter Apple production traffic.
