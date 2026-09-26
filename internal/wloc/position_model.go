@@ -9,6 +9,8 @@ import (
 
 const DefaultWifiPositionMaxAPs = 16
 
+var ErrNoUsableBSSIDOverlap = errors.New("scan and response have no usable BSSID overlap")
+
 // ScanObservation models the part of a live Wi-Fi scan that the empirical
 // lab estimator needs: BSSID identity plus received signal strength.
 type ScanObservation struct {
@@ -94,7 +96,7 @@ func EstimateWifiPosition(scan []ScanObservation, response []DeviceLocation, max
 		})
 	}
 	if len(matches) == 0 {
-		return WifiPositionEstimate{}, errors.New("scan and response have no usable BSSID overlap")
+		return WifiPositionEstimate{}, ErrNoUsableBSSIDOverlap
 	}
 
 	sort.Slice(matches, func(i, j int) bool {

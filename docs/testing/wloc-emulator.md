@@ -210,3 +210,36 @@ Server-side `wloc_event` estimates are emitted only for the deterministic
 synthetic request fixture, where scan RSSIs are known by construction. Arbitrary
 requests do not receive a modeled estimate because the WLOC request alone does
 not provide the live scan RSSI values needed by this model.
+
+
+## Observed ALS requester lifecycle
+
+The unified-log traces show that the os_activity ID is useful for following a
+WifiPosition scan lifecycle, but it is not a stable network-request identifier.
+The same ALS requester can be issued under one activity and receive its network
+callbacks under another. The numeric requester token in the ALS tuple is the
+reliable correlation key across `queryLocation`, `didReceiveResponse`, and
+`requesterDidFinish`.
+
+A successful observed scan follows this shape:
+
+1. a top-level WifiPosition activity is created when the Wi-Fi scan arrives;
+2. the activity carries BSSID/RSSI/channel data through Stage1/Stage2;
+3. unknown BSSIDs are logged as `notindb`;
+4. NetworkProvider issues a query and ALS performs `unifiedQuery`/`queryLocation`;
+5. the WLOC response is parsed and the requester emits `requesterDidFinish`;
+6. WifiPosition receives `Network::AlsFinished` and re-evaluates the live scan
+   against the accumulated ALS/tile state;
+7. usable overlap can produce `fix`; zero overlap can still receive
+   `Network::AlsFinished`, followed by `nofix` and `Network::AlsAllUnknown`.
+
+Therefore `Network::AlsFinished` is modeled as requester completion/dispatch,
+not as proof of a successful location solve. The downstream overlap decision is
+separate. In the available successful traces the ALS summary repeatedly shows
+18 matched APs while total scan size changes (18/25=72%, 18/27=66%, 18/28=64%,
+18/31=58%, 18/37=48%, 18/40=45%). These samples do not establish that 18 is a
+hard minimum; they show a stable known-AP set in this environment.
+
+`EvaluateALSLifecycle` captures only these observed post-requester semantics for
+lab testing. It does not create ALS requester objects, invoke private APIs, or
+trigger CoreLocation state transitions.
