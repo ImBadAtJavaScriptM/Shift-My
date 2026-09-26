@@ -50,7 +50,7 @@ func TestEvaluateALSLifecycleFixAfterCompletedRequester(t *testing.T) {
 		outcome.ObservedWorkingSetHint != ObservedALSWorkingSetHint ||
 		outcome.CandidateWorkingSet != ObservedALSWorkingSetHint ||
 		outcome.RejectedByWorkingSetCap != 4 ||
-		outcome.WorkingSetPercent != 82 {
+		outcome.WorkingSetPercent != 81 {
 		t.Fatalf("outcome=%+v", outcome)
 	}
 	if outcome.Estimate == nil {
@@ -117,5 +117,50 @@ func TestEvaluateALSLifecycleDeduplicatesScan(t *testing.T) {
 		outcome.MatchedAPs != 1 ||
 		!outcome.HasUsableOverlap {
 		t.Fatalf("outcome=%+v", outcome)
+	}
+}
+
+func TestEvaluateALSLifecycleMatchesObservedTilesalsPercentages(t *testing.T) {
+	const total = 31
+	scan := make([]ScanObservation, 0, total)
+	response := make([]DeviceLocation, 0, 28)
+
+	for i := 0; i < total; i++ {
+		bssid := syntheticTestBSSID(i)
+		scan = append(scan, ScanObservation{BSSID: bssid, RSSI: -30 - i})
+		switch {
+		case i < 21:
+			response = append(response, DeviceLocation{
+				BSSID:              bssid,
+				LatitudeE8:         1000000000 + int64(i),
+				LongitudeE8:        2000000000 + int64(i),
+				HorizontalAccuracy: 20,
+			})
+		case i < 28:
+			response = append(response, DeviceLocation{BSSID: bssid})
+		default:
+		}
+	}
+
+	outcome, err := EvaluateALSLifecycle(scan, response, DefaultWifiPositionMaxAPs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.ALSLocated != 21 ||
+		outcome.TileLocated != 0 ||
+		outcome.ReturnedWithoutLocation != 7 ||
+		outcome.NotReturned != 3 {
+		t.Fatalf("counts=%+v", outcome)
+	}
+	if got, want := outcome.TraceSourcePercentages(), [4]int{67, 0, 22, 9}; got != want {
+		t.Fatalf("tilesals=%v want=%v", got, want)
+	}
+	if outcome.MissingPercent != 32 {
+		t.Fatalf("missing percent=%d want=32", outcome.MissingPercent)
+	}
+	if outcome.CandidateWorkingSet != 18 ||
+		outcome.RejectedByWorkingSetCap != 3 ||
+		outcome.WorkingSetPercent != 58 {
+		t.Fatalf("working set=%+v", outcome)
 	}
 }

@@ -399,3 +399,25 @@ The empirical RSSI/accuracy weighting therefore models the observable horizontal
 solve well but should not be treated as an exact reconstruction. The private
 logs also expose band/stage labels such as `2.4GHz`, `stage1+5GHz`, and
 `placebad`; their exact proprietary meanings remain unresolved.
+
+
+## Decoded `tilesals` source tuple
+
+The private WifiPosition tuple labeled `tilesals` is now trace-decoded with high
+confidence. Across every checked occurrence, its four integer fields are the
+independently truncated percentages of the current scan classified as:
+
+1. ALS-located
+2. tile-located
+3. unknown (a returned record exists but has no usable Location)
+4. not-in-db (no returned record exists)
+
+Examples from the capture include 20/27 ALS + 7/27 unknown -> `74 | 0 | 25 | 0`,
+21/31 ALS + 7/31 unknown + 3/31 not-in-db -> `67 | 0 | 22 | 9`, and
+25/37 ALS + 7/37 unknown + 5/37 not-in-db -> `67 | 0 | 18 | 13`.
+The percentages use integer truncation rather than rounding and therefore need
+not sum to exactly 100.
+
+The lab lifecycle model exposes these four fields through
+`TraceSourcePercentages`. The independent tile-location source is currently
+modeled as zero because no controlled tile source has been added to the lab.

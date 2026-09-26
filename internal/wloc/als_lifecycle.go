@@ -11,21 +11,25 @@ const ObservedALSWorkingSetHint = 18
 // controlled unified-log traces. It intentionally begins after a response has
 // already been parsed by ALS; it does not invoke private CoreLocation APIs.
 type ALSLifecycleOutcome struct {
-	Event                   string
-	Resolution              string
-	MatchedAPs              int
-	TotalScan               int
-	ALSLocated              int
-	ReturnedWithoutLocation int
-	NotReturned             int
-	ALSLocatedPercent       int
-	MissingPercent          int
-	HasUsableOverlap        bool
-	ObservedWorkingSetHint  int
-	CandidateWorkingSet     int
-	RejectedByWorkingSetCap int
-	WorkingSetPercent       int
-	Estimate                *WifiPositionEstimate
+	Event                          string
+	Resolution                     string
+	MatchedAPs                     int
+	TotalScan                      int
+	ALSLocated                     int
+	TileLocated                    int
+	ReturnedWithoutLocation        int
+	NotReturned                    int
+	ALSLocatedPercent              int
+	TileLocatedPercent             int
+	ReturnedWithoutLocationPercent int
+	NotReturnedPercent             int
+	MissingPercent                 int
+	HasUsableOverlap               bool
+	ObservedWorkingSetHint         int
+	CandidateWorkingSet            int
+	RejectedByWorkingSetCap        int
+	WorkingSetPercent              int
+	Estimate                       *WifiPositionEstimate
 }
 
 // EvaluateALSLifecycle approximates the WifiPosition decision that follows a
@@ -48,24 +52,28 @@ func EvaluateALSLifecycle(scan []ScanObservation, response []DeviceLocation, max
 	}
 
 	outcome := ALSLifecycleOutcome{
-		Event:                   "Network::AlsFinished",
-		Resolution:              "Network::AlsAllUnknown",
-		MatchedAPs:              classification.ALSLocated,
-		TotalScan:               classification.TotalScan,
-		ALSLocated:              classification.ALSLocated,
-		ReturnedWithoutLocation: classification.ReturnedWithoutLocation,
-		NotReturned:             classification.NotReturned,
-		ALSLocatedPercent:       classification.ALSLocatedPercent,
-		MissingPercent:          classification.MissingPercent,
-		HasUsableOverlap:        classification.ALSLocated > 0,
-		ObservedWorkingSetHint:  ObservedALSWorkingSetHint,
-		CandidateWorkingSet:     classification.ALSLocated,
+		Event:                          "Network::AlsFinished",
+		Resolution:                     "Network::AlsAllUnknown",
+		MatchedAPs:                     classification.ALSLocated,
+		TotalScan:                      classification.TotalScan,
+		ALSLocated:                     classification.ALSLocated,
+		TileLocated:                    classification.TileLocated,
+		ReturnedWithoutLocation:        classification.ReturnedWithoutLocation,
+		NotReturned:                    classification.NotReturned,
+		ALSLocatedPercent:              classification.ALSLocatedPercent,
+		TileLocatedPercent:             classification.TileLocatedPercent,
+		ReturnedWithoutLocationPercent: classification.ReturnedWithoutLocationPercent,
+		NotReturnedPercent:             classification.NotReturnedPercent,
+		MissingPercent:                 classification.MissingPercent,
+		HasUsableOverlap:               classification.ALSLocated > 0,
+		ObservedWorkingSetHint:         ObservedALSWorkingSetHint,
+		CandidateWorkingSet:            classification.ALSLocated,
 	}
 	if outcome.CandidateWorkingSet > ObservedALSWorkingSetHint {
 		outcome.RejectedByWorkingSetCap = outcome.CandidateWorkingSet - ObservedALSWorkingSetHint
 		outcome.CandidateWorkingSet = ObservedALSWorkingSetHint
 	}
-	outcome.WorkingSetPercent = roundedPercent(outcome.CandidateWorkingSet, outcome.TotalScan)
+	outcome.WorkingSetPercent = floorPercent(outcome.CandidateWorkingSet, outcome.TotalScan)
 	if !outcome.HasUsableOverlap {
 		return outcome, nil
 	}
@@ -87,12 +95,16 @@ func EvaluateALSLifecycle(scan []ScanObservation, response []DeviceLocation, max
 }
 
 type alsOverlapClassification struct {
-	TotalScan               int
-	ALSLocated              int
-	ReturnedWithoutLocation int
-	NotReturned             int
-	ALSLocatedPercent       int
-	MissingPercent          int
+	TotalScan                      int
+	ALSLocated                     int
+	TileLocated                    int
+	ReturnedWithoutLocation        int
+	NotReturned                    int
+	ALSLocatedPercent              int
+	TileLocatedPercent             int
+	ReturnedWithoutLocationPercent int
+	NotReturnedPercent             int
+	MissingPercent                 int
 }
 
 func classifyALSOverlap(scan []ScanObservation, response []DeviceLocation) (alsOverlapClassification, error) {
@@ -137,14 +149,35 @@ func classifyALSOverlap(scan []ScanObservation, response []DeviceLocation) (alsO
 		classification.ReturnedWithoutLocation++
 	}
 
-	classification.ALSLocatedPercent = roundedPercent(classification.ALSLocated, classification.TotalScan)
-	classification.MissingPercent = 100 - classification.ALSLocatedPercent
+	classification.ALSLocatedPercent = floorPercent(classification.ALSLocated, classification.TotalScan)
+	classification.TileLocatedPercent = floorPercent(classification.TileLocated, classification.TotalScan)
+	classification.ReturnedWithoutLocationPercent = floorPercent(classification.ReturnedWithoutLocation, classification.TotalScan)
+	classification.NotReturnedPercent = floorPercent(classification.NotReturned, classification.TotalScan)
+	classification.MissingPercent = floorPercent(
+		classification.ReturnedWithoutLocation+classification.NotReturned,
+		classification.TotalScan,
+	)
 	return classification, nil
 }
 
-func roundedPercent(numerator, denominator int) int {
+// TraceSourcePercentages returns the four source buckets observed in the
+// private WifiPosition tilesals tuple: ALS, tile, unknown, not-in-db.
+//
+// The controlled lab does not yet feed an independent tile-location source, so
+// TileLocatedPercent is currently zero. Percentages are independently floored,
+// matching the trace even when the four integers sum to 98 or 99.
+func (o ALSLifecycleOutcome) TraceSourcePercentages() [4]int {
+	return [4]int{
+		o.ALSLocatedPercent,
+		o.TileLocatedPercent,
+		o.ReturnedWithoutLocationPercent,
+		o.NotReturnedPercent,
+	}
+}
+
+func floorPercent(numerator, denominator int) int {
 	if denominator <= 0 {
 		return 0
 	}
-	return (numerator*100 + denominator/2) / denominator
+	return numerator * 100 / denominator
 }
