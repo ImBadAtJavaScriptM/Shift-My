@@ -288,9 +288,10 @@ locations, not-returned BSSIDs, overlap percentages, an observed working-set
 hint of 18, and a lab outcome. It does not create ALS requester objects, invoke
 private APIs, emit private events, or alter Apple production traffic.
 
-The strongest-18 centroid remains only a simple empirical position estimator.
-The private trace records show that CoreLocation applies additional weighting
-and a 2.4 GHz / 5 GHz fusion stage after selection.
+The trace-backed strongest-18 selection is followed in the lab by the
+cross-validated RSSI/accuracy weighting described below. That weighting remains
+an empirical approximation; the exact private CoreLocation fusion formula is
+not claimed to be recovered.
 
 
 ## Trace-validated horizontal solver approximation
@@ -334,22 +335,34 @@ CoreLocation APIs or generating production Apple traffic.
 ## ALS completion timing and cached re-evaluation
 
 Relative monotonic timestamps remain useful even when a single TraceV3 file
-cannot recover absolute wall-clock time. Across two independent captures, the
-first `Network::AlsFinished` pass usually follows the most recent
-`requesterDidFinish` by only a few tenths of a millisecond. One capture showed a
-median of about 0.44 ms (typical range ~0.15-0.67 ms); the other also had a
-~0.44 ms median, with occasional scheduler delays around 1-1.5 ms.
+cannot recover absolute wall-clock time. The parsed trace counter uses the
+device's ~24 MHz mach timebase; longer embedded wall-clock spans independently
+validate a rate near 24 million ticks per second. The parser's synthetic 1970
+timestamp must therefore not be treated as if the raw `time` value were
+nanoseconds.
 
-Multiple requester completions can be coalesced before the provider runs. The
-captured examples include two completions separated by ~0.06 ms and four
-completions spread across ~2.76 ms. This does not look like a fixed-duration
-batch timer; the lab model therefore treats dispatch as deferred/coalescible
-rather than sleeping for a specific number of milliseconds.
+Two independent captures produced essentially the same completion-triggered
+median: about 18.267 ms and 18.277 ms from the most recent
+`requesterDidFinish` to the first `Network::AlsFinished`. Most ordinary cases
+fell in the roughly 6-28 ms range, with occasional scheduler/coalescing cases
+around 57-65 ms.
+
+Multiple requester completions can be coalesced before the provider runs. One
+captured burst contained two completions spanning about 2.47 ms and dispatched
+about 12.52 ms after the later completion. A larger burst contained four
+completions spread across about 114.88 ms; the provider dispatched about
+18.92 ms after the final completion (about 133.80 ms after the earliest one).
+This does not look like a fixed-duration debounce timer, so the lab model
+represents dispatch as deferred/coalescible instead of sleeping for a hard-coded
+duration.
 
 The traces also contain repeated `Network::AlsFinished` passes with no new
-`requesterDidFinish` immediately beforehand. Those passes reuse the same
-ALS-resolved AP set and re-evaluate the current scan. `ReevaluateCached` models
-that distinction explicitly: cached re-evaluation is allowed only after an
+`requesterDidFinish` immediately beforehand. Measured cached follow-on passes
+occurred about 1.70-11.11 ms after the prior provider pass. In a captured
+four-completion burst, three consecutive provider passes reused the same
+27-BSSID scan, the same 18-used/2-rejected working set, and the same final
+coordinate. `ReevaluateCached` models these passes as idempotent cached
+re-evaluations rather than new network input; it is allowed only after an
 initial completion-triggered dispatch and while no new completion remains
 pending.
 
