@@ -477,4 +477,12 @@ For ordinary consecutive updates, the posterior variance follows the scalar inve
 
 `Ppost = 1 / (1/Pprior + 1/R)`
 
-The 1.7 factor matches all 26 decoded updates to double precision. Some later transitions do not fuse directly from the immediately preceding posterior; those windows also expose evidence of prediction/process-noise or reset behavior. `FuseVerticalConfidence` therefore accepts the prior variance explicitly and models only the trace-supported measurement-update step. It does not claim to recover CoreLocation's private prior initialization, prediction noise, or reset logic.
+The 1.7 factor matches all 26 decoded updates where both the instantaneous raw vertical sigma and the corresponding measurement variance are simultaneously visible.
+
+A stronger recurrence is visible in the internal confidence-state rows. Across all 38 sequential decodable transitions in the two genuine captures, including transitions where the private epoch/base timestamp changes, the prediction step is exact to floating-point precision:
+
+`Pprior(next) = Pposterior(previous) + 0.02 * dt^2`
+
+Every subsequent positive-measurement row then satisfies the inverse-variance update above to floating-point precision. The observed epoch/base timestamp changes therefore do not reset the scalar vertical variance in these captures.
+
+`InitializeVerticalConfidence`, `PredictVerticalConfidence`, and `StepVerticalConfidence` model this trace-supported scalar recurrence. A second private constant (`0.0005`) is present alongside the `0.02` coefficient in the internal rows, but its role is not required for this recovered scalar variance recurrence and remains intentionally unmodeled.
