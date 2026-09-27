@@ -518,3 +518,35 @@ The provider-request-to-`Network::AlsFinished` handoff is effectively synchronou
 Tile activity is nearby but not the immediate trigger. Of the 36 cached passes, 28 have their nearest `CLTileFile`/tile-detail event after the provider request, and multiple bursts share one later tile event across several cached passes. This ordering rules out a model where each cached `Network::AlsFinished` must be initiated by a fresh tile event. Tile/cache state can still contribute data, but the trace-backed immediate trigger is the provider request.
 
 `HandleProviderRequest` models this explicitly. It accepts only the observed cached-request shape (`type=none`, `requester=default`, `numOfRequestedScans=0`), supports both low-priority states, requires the ALS cache to have been primed by an earlier completion-driven dispatch, and rejects cached reevaluation while new ALS completions are pending.
+
+
+### Cached provider request causal ordering
+
+A stricter event-ordering check separates nearby tile activity from the actual cached
+re-evaluation trigger. Across 36 cached provider-request -> Network::AlsFinished
+pairs in the two genuine traces, zero CLTileFile/TileId events of any type occurred
+between the provider request and its corresponding Network::AlsFinished event.
+That includes zero Wi-Fi tile events.
+
+The request-to-finish handoff is effectively synchronous in the trace: median
+~0.001 ms in both captures, with the largest observed pair still below ~0.031 ms.
+Therefore the previously observed 1.70-11.11 ms spacing between repeated provider
+passes is inter-pass scheduling, not a hidden tile lookup or cached-dispatch debounce.
+
+Tile activity is dense elsewhere in the same captures (roughly 3.2 and 7.3 Wi-Fi
+tile records per second), so a tile event appearing a few milliseconds from a
+cached pass is not by itself evidence of causality. This is consistent with the
+separate source classification result: all 108 decoded tilesals tuples had a
+0-percent tile-only bucket.
+
+The upstream reasons for issuing Request, type, none are heterogeneous. Cached
+passes were seen after Wi-Fi stage transitions (including stage1+5GHz and
+stage2+5GHz labels), wifi1Event activity, coarse-motion activity, and client/provider
+state changes. No single upstream private label is universal. The stable modeled
+boundary is therefore the WifiPosition provider request itself:
+
+provider request (type=none, no fresh scan requested) -> cached ALS state re-evaluation
+-> Network::AlsFinished
+
+HandleProviderRequest models this event-driven boundary synchronously. It does not
+require or simulate a tile update, and it does not invent a timer.
