@@ -43,6 +43,8 @@ type ALSDispatchResult struct {
 	Cause                string
 	Trigger              string
 	ProviderRequest      *WifiPositionProviderRequest
+	ScanGeneration       uint64
+	ScanTime             float64
 	CoalescedCompletions int
 	Requesters           []ALSRequesterSnapshot
 	CachedLocations      int
@@ -58,6 +60,16 @@ type WifiPositionProviderRequest struct {
 	LowPriority         bool
 	Requester           string
 	NumOfRequestedScans int
+}
+
+// WifiScanSnapshot is the provider's current scan state in the controlled lab.
+// A type=none provider request can reuse this snapshot without requesting a new
+// physical Wi-Fi scan. Generation is lab-local and advances only when
+// UpdateScanSnapshot is called.
+type WifiScanSnapshot struct {
+	Generation   uint64
+	ScanTime     float64
+	Observations []ScanObservation
 }
 
 // ALSAccessPointLocationService is a controlled, in-memory approximation of the
@@ -132,9 +144,11 @@ func (s *ALSAccessPointLocationService) Len() int {
 // Wi-Fi state dirty. A later Flush coalesces one or more completions into a
 // single Network::AlsFinished-style scan re-evaluation.
 type ALSCompletionDispatcher struct {
-	service       *ALSAccessPointLocationService
-	pending       []ALSRequesterSnapshot
-	hasDispatched bool
+	service            *ALSAccessPointLocationService
+	pending            []ALSRequesterSnapshot
+	hasDispatched      bool
+	currentScan        *WifiScanSnapshot
+	nextScanGeneration uint64
 }
 
 func NewALSCompletionDispatcher(service *ALSAccessPointLocationService) *ALSCompletionDispatcher {
@@ -162,6 +176,62 @@ func (d *ALSCompletionDispatcher) PendingCompletions() int {
 
 func (d *ALSCompletionDispatcher) Service() *ALSAccessPointLocationService {
 	return d.service
+}
+
+// UpdateScanSnapshot stores a new current scan snapshot. This is deliberately
+// separate from HandleCachedProviderRequest: the trace-backed cached path can
+// execute repeatedly while Generation and ScanTime remain unchanged.
+func (d *ALSCompletionDispatcher) UpdateScanSnapshot(scan []ScanObservation, scanTime float64) (WifiScanSnapshot, error) {
+	valid := 0
+	for _, observation := range scan {
+		if looksLikeBSSID(observation.BSSID) {
+			valid++
+		}
+	}
+	if valid == 0 {
+		return WifiScanSnapshot{}, errors.New("scan contains no valid BSSIDs")
+	}
+	if scanTime < 0 {
+		return WifiScanSnapshot{}, errors.New("scan time must be non-negative")
+	}
+	d.nextScanGeneration++
+	copyScan := append([]ScanObservation(nil), scan...)
+	snapshot := WifiScanSnapshot{
+		Generation:   d.nextScanGeneration,
+		ScanTime:     scanTime,
+		Observations: copyScan,
+	}
+	d.currentScan = &snapshot
+	return cloneWifiScanSnapshot(snapshot), nil
+}
+
+// CurrentScanSnapshot returns a defensive copy of the current stored scan.
+func (d *ALSCompletionDispatcher) CurrentScanSnapshot() (WifiScanSnapshot, bool) {
+	if d.currentScan == nil {
+		return WifiScanSnapshot{}, false
+	}
+	return cloneWifiScanSnapshot(*d.currentScan), true
+}
+
+func cloneWifiScanSnapshot(snapshot WifiScanSnapshot) WifiScanSnapshot {
+	snapshot.Observations = append([]ScanObservation(nil), snapshot.Observations...)
+	return snapshot
+}
+
+// HandleCachedProviderRequest models the no-fresh-scan cached path using the
+// stored current scan snapshot. Repeated calls reuse the same generation until
+// UpdateScanSnapshot explicitly replaces it.
+func (d *ALSCompletionDispatcher) HandleCachedProviderRequest(request WifiPositionProviderRequest, maxAPs int) (ALSDispatchResult, error) {
+	if d.currentScan == nil {
+		return ALSDispatchResult{}, errors.New("no current Wi-Fi scan snapshot")
+	}
+	result, err := d.HandleProviderRequest(request, d.currentScan.Observations, maxAPs)
+	if err != nil {
+		return ALSDispatchResult{}, err
+	}
+	result.ScanGeneration = d.currentScan.Generation
+	result.ScanTime = d.currentScan.ScanTime
+	return result, nil
 }
 
 // Flush models the provider's deferred/coalesced re-evaluation. Calling Flush

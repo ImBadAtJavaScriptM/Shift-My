@@ -441,3 +441,109 @@ func TestALSCompletionDispatcherProviderRequestShape(t *testing.T) {
 		t.Fatal("expected non-none provider request type to be rejected")
 	}
 }
+
+func TestALSCompletionDispatcherCachedProviderReusesStoredScanSnapshot(t *testing.T) {
+	dispatcher := NewALSCompletionDispatcher(nil)
+	device := DeviceLocation{
+		BSSID:              "02:00:00:00:00:31",
+		LatitudeE8:         3400940000,
+		LongitudeE8:        -11849730000,
+		HorizontalAccuracy: 20,
+	}
+	scan := []ScanObservation{{BSSID: device.BSSID, RSSI: -45}}
+
+	snapshot, err := dispatcher.UpdateScanSnapshot(scan, 811915894.376)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Generation != 1 || snapshot.ScanTime != 811915894.376 {
+		t.Fatalf("snapshot=%+v", snapshot)
+	}
+
+	if err := dispatcher.Complete(ALSCompletion{
+		Requester: ALSRequesterSnapshot{
+			RequesterToken:  5000001,
+			ProviderCode:    3636,
+			IssuedSerial:    91,
+			CompletedSerial: 90,
+			Lane:            2,
+		},
+		Response: []DeviceLocation{device},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dispatcher.Flush(scan, DefaultWifiPositionMaxAPs); err != nil {
+		t.Fatal(err)
+	}
+
+	var first ALSDispatchResult
+	for i := 0; i < 3; i++ {
+		got, err := dispatcher.HandleCachedProviderRequest(
+			WifiPositionProviderRequest{
+				Type:                "none",
+				Requester:           "default",
+				NumOfRequestedScans: 0,
+			},
+			DefaultWifiPositionMaxAPs,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ScanGeneration != 1 || got.ScanTime != 811915894.376 {
+			t.Fatalf("cached pass %d scan identity=%+v", i, got)
+		}
+		if got.ProviderRequest == nil || got.Trigger != "wifi-position-provider-request" {
+			t.Fatalf("cached pass %d result=%+v", i, got)
+		}
+		if i == 0 {
+			first = got
+		} else if got.Outcome.Estimate == nil || first.Outcome.Estimate == nil ||
+			got.Outcome.Estimate.Latitude != first.Outcome.Estimate.Latitude ||
+			got.Outcome.Estimate.Longitude != first.Outcome.Estimate.Longitude {
+			t.Fatalf("cached pass %d changed estimate: first=%+v got=%+v", i, first.Outcome.Estimate, got.Outcome.Estimate)
+		}
+	}
+
+	updatedScan := []ScanObservation{{BSSID: device.BSSID, RSSI: -40}}
+	updated, err := dispatcher.UpdateScanSnapshot(updatedScan, 811915895.001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Generation != 2 || updated.ScanTime != 811915895.001 {
+		t.Fatalf("updated=%+v", updated)
+	}
+	got, err := dispatcher.HandleCachedProviderRequest(
+		WifiPositionProviderRequest{Type: "none", Requester: "default"},
+		DefaultWifiPositionMaxAPs,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ScanGeneration != 2 || got.ScanTime != 811915895.001 {
+		t.Fatalf("new generation not used: %+v", got)
+	}
+}
+
+func TestALSCompletionDispatcherScanSnapshotIsDefensiveCopy(t *testing.T) {
+	dispatcher := NewALSCompletionDispatcher(nil)
+	scan := []ScanObservation{{BSSID: "02:00:00:00:00:41", RSSI: -50}}
+	snapshot, err := dispatcher.UpdateScanSnapshot(scan, 123.5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan[0].RSSI = -1
+	snapshot.Observations[0].RSSI = -2
+
+	current, ok := dispatcher.CurrentScanSnapshot()
+	if !ok {
+		t.Fatal("expected current snapshot")
+	}
+	if current.Observations[0].RSSI != -50 {
+		t.Fatalf("stored snapshot mutated: %+v", current)
+	}
+	current.Observations[0].RSSI = -3
+	current2, _ := dispatcher.CurrentScanSnapshot()
+	if current2.Observations[0].RSSI != -50 {
+		t.Fatalf("returned snapshot was not defensive copy: %+v", current2)
+	}
+}
