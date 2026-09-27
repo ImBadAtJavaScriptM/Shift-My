@@ -363,7 +363,7 @@ The traces also contain repeated `Network::AlsFinished` passes with no new
 occurred about 1.70-11.11 ms after the prior provider pass. In a captured
 four-completion burst, three consecutive provider passes reused the same
 27-BSSID scan, the same 18-used/2-rejected working set, and the same final
-coordinate. `ReevaluateCached` models these passes as idempotent cached
+coordinate. `HandleProviderRequest` models these passes as idempotent cached
 re-evaluations rather than new network input; it is allowed only after an
 initial completion-triggered dispatch and while no new completion remains
 pending.
@@ -457,7 +457,7 @@ Single-completion paths are noisier (roughly 6-28 ms in the main cluster, with a
 
 The repeated `Network::AlsFinished` passes with no new requester completion are strongly tied to WifiPosition provider requests rather than fresh radio scans. Across 33 checked cached dispatches in the two genuine traces, every dispatch was preceded within 1-5 log records by `WifiPosition Request, type, none`. These passes occur under both lowPriority=yes and lowPriority=no.
 
-Many of those reevaluations reuse the exact same Wi-Fi `scanTime` for several seconds while provider/location timestamps advance. Therefore a new physical Wi-Fi scan is not required. The best trace-backed model is: provider request -> reevaluate the current scan snapshot against the cached ALS/tile state -> emit another `Network::AlsFinished` result. `ReevaluateCached` intentionally models this request-driven reuse without inventing a private timer.
+Many of those reevaluations reuse the exact same Wi-Fi `scanTime` for several seconds while provider/location timestamps advance. Therefore a new physical Wi-Fi scan is not required. The best trace-backed model is: provider request -> reevaluate the current scan snapshot against the cached ALS/tile state -> emit another `Network::AlsFinished` result. `HandleProviderRequest` intentionally models this request-driven reuse without inventing a private timer.
 
 
 ### Tile-source observation
@@ -507,3 +507,14 @@ The same internal rows expose the altitude mean update, not just its variance. T
 Across the decoded rows, the predicted altitude equals the immediately previous posterior altitude exactly, and solving the hidden measurement altitude backward from the posterior produces stable repeated measurement values within each provider burst to numerical precision. The private epoch/base timestamp can change without breaking state continuity.
 
 `VerticalState` and `StepVerticalState` model this trace-supported scalar altitude state only. The additional private constant `0.0005` visible in the same internal rows is not needed to reproduce either the visible altitude mean or variance recurrence and remains intentionally unresolved.
+
+
+### Provider-request cached re-evaluation trigger
+
+A tighter timing pass identifies the immediate cached-reuse trigger more precisely. Across 36 cached `Network::AlsFinished` passes in the two parsed captures, the preceding `WifiPosition` log is `Request, type, none` with `requester, default` and `numOfRequestedScans, 0`. Both `lowPriority=yes` and `lowPriority=no` occur.
+
+The provider-request-to-`Network::AlsFinished` handoff is effectively synchronous in these traces: the median is about 0.001 ms (roughly 1 microsecond) in both captures, with the largest checked request-to-finish gap about 0.031 ms. The lab model therefore treats the provider request itself as the cached-re-evaluation trigger and does not invent a private timer.
+
+Tile activity is nearby but not the immediate trigger. Of the 36 cached passes, 28 have their nearest `CLTileFile`/tile-detail event after the provider request, and multiple bursts share one later tile event across several cached passes. This ordering rules out a model where each cached `Network::AlsFinished` must be initiated by a fresh tile event. Tile/cache state can still contribute data, but the trace-backed immediate trigger is the provider request.
+
+`HandleProviderRequest` models this explicitly. It accepts only the observed cached-request shape (`type=none`, `requester=default`, `numOfRequestedScans=0`), supports both low-priority states, requires the ALS cache to have been primed by an earlier completion-driven dispatch, and rejects cached reevaluation while new ALS completions are pending.

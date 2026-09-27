@@ -41,10 +41,23 @@ type ALSCompletion struct {
 type ALSDispatchResult struct {
 	Event                string
 	Cause                string
+	Trigger              string
+	ProviderRequest      *WifiPositionProviderRequest
 	CoalescedCompletions int
 	Requesters           []ALSRequesterSnapshot
 	CachedLocations      int
 	Outcome              ALSLifecycleOutcome
+}
+
+// WifiPositionProviderRequest models the trace-visible provider request that
+// triggers cached ALS re-evaluation. Across the checked captures the cached
+// path uses type=none, requester=default, and numOfRequestedScans=0; both
+// lowPriority=yes and lowPriority=no occur.
+type WifiPositionProviderRequest struct {
+	Type                string
+	LowPriority         bool
+	Requester           string
+	NumOfRequestedScans int
 }
 
 // ALSAccessPointLocationService is a controlled, in-memory approximation of the
@@ -171,6 +184,7 @@ func (d *ALSCompletionDispatcher) Flush(scan []ScanObservation, maxAPs int) (ALS
 	return ALSDispatchResult{
 		Event:                "Network::AlsFinished",
 		Cause:                "completed-requester",
+		Trigger:              "requester-completion",
 		CoalescedCompletions: len(requesters),
 		Requesters:           requesters,
 		CachedLocations:      d.service.Len(),
@@ -178,14 +192,28 @@ func (d *ALSCompletionDispatcher) Flush(scan []ScanObservation, maxAPs int) (ALS
 	}, nil
 }
 
-// ReevaluateCached models the repeated Network::AlsFinished passes observed
-// after the first completion-triggered dispatch. The trace shows the same
-// cached ALS result set being rematched against the current scan without a new
-// requesterDidFinish immediately beforehand.
+// HandleProviderRequest models the trace-backed cached re-evaluation trigger.
+// The genuine traces show WifiPosition logging "Request, type, none" immediately
+// before cached Network::AlsFinished passes, often while reusing the exact same
+// scanTime. No fixed timer or fresh physical scan is required.
 //
-// Re-evaluation is deliberately blocked while new completions are pending, and
-// before any completion-triggered dispatch has primed the cache.
-func (d *ALSCompletionDispatcher) ReevaluateCached(scan []ScanObservation, maxAPs int) (ALSDispatchResult, error) {
+// The trace-visible request-to-finish handoff is effectively synchronous (about
+// 1 microsecond median in both parsed captures, with scheduler outliers still
+// below 0.1 ms), so the lab model intentionally performs the re-evaluation
+// synchronously and does not invent a private debounce interval.
+func (d *ALSCompletionDispatcher) HandleProviderRequest(request WifiPositionProviderRequest, scan []ScanObservation, maxAPs int) (ALSDispatchResult, error) {
+	if request.Type != "none" {
+		return ALSDispatchResult{}, errors.New("cached ALS re-evaluation requires provider request type none")
+	}
+	if request.Requester == "" {
+		request.Requester = "default"
+	}
+	if request.Requester != "default" {
+		return ALSDispatchResult{}, errors.New("unsupported cached ALS provider requester")
+	}
+	if request.NumOfRequestedScans != 0 {
+		return ALSDispatchResult{}, errors.New("cached ALS provider request must not require a fresh scan")
+	}
 	if len(d.pending) != 0 {
 		return ALSDispatchResult{}, errors.New("pending ALS completions must be flushed before cached re-evaluation")
 	}
@@ -200,9 +228,12 @@ func (d *ALSCompletionDispatcher) ReevaluateCached(scan []ScanObservation, maxAP
 	if err != nil {
 		return ALSDispatchResult{}, err
 	}
+	requestCopy := request
 	return ALSDispatchResult{
 		Event:                "Network::AlsFinished",
 		Cause:                "cached-reevaluation",
+		Trigger:              "wifi-position-provider-request",
+		ProviderRequest:      &requestCopy,
 		CoalescedCompletions: 0,
 		CachedLocations:      d.service.Len(),
 		Outcome:              outcome,

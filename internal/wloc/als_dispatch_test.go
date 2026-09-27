@@ -246,7 +246,9 @@ func TestALSCompletionDispatcherCachedReevaluation(t *testing.T) {
 	}
 	scan := []ScanObservation{{BSSID: device.BSSID, RSSI: -45}}
 
-	if _, err := dispatcher.ReevaluateCached(scan, DefaultWifiPositionMaxAPs); err == nil {
+	if _, err := dispatcher.HandleProviderRequest(WifiPositionProviderRequest{
+		Type: "none", Requester: "default",
+	}, scan, DefaultWifiPositionMaxAPs); err == nil {
 		t.Fatal("expected cached re-evaluation to fail before initial dispatch")
 	}
 	if err := dispatcher.Complete(ALSCompletion{
@@ -261,7 +263,9 @@ func TestALSCompletionDispatcherCachedReevaluation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dispatcher.ReevaluateCached(scan, DefaultWifiPositionMaxAPs); err == nil {
+	if _, err := dispatcher.HandleProviderRequest(WifiPositionProviderRequest{
+		Type: "none", Requester: "default",
+	}, scan, DefaultWifiPositionMaxAPs); err == nil {
 		t.Fatal("expected cached re-evaluation to fail while a completion is pending")
 	}
 	first, err := dispatcher.Flush(scan, DefaultWifiPositionMaxAPs)
@@ -272,7 +276,9 @@ func TestALSCompletionDispatcherCachedReevaluation(t *testing.T) {
 		t.Fatalf("first=%+v", first)
 	}
 
-	repeat, err := dispatcher.ReevaluateCached(scan, DefaultWifiPositionMaxAPs)
+	repeat, err := dispatcher.HandleProviderRequest(WifiPositionProviderRequest{
+		Type: "none", Requester: "default",
+	}, scan, DefaultWifiPositionMaxAPs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +290,8 @@ func TestALSCompletionDispatcherCachedReevaluation(t *testing.T) {
 		t.Fatalf("repeat=%+v", repeat)
 	}
 
-	unknown, err := dispatcher.ReevaluateCached(
+	unknown, err := dispatcher.HandleProviderRequest(
+		WifiPositionProviderRequest{Type: "none", Requester: "default", LowPriority: true},
 		[]ScanObservation{{BSSID: "02:00:00:00:00:02", RSSI: -40}},
 		DefaultWifiPositionMaxAPs,
 	)
@@ -355,5 +362,82 @@ func TestALSCompletionDispatcherCoalescesMixedIssuedSerials(t *testing.T) {
 	if result.Requesters[0].IssuedSerial != 71 ||
 		result.Requesters[1].IssuedSerial != 72 {
 		t.Fatalf("mixed issued serials lost: %+v", result.Requesters)
+	}
+}
+
+func TestALSCompletionDispatcherProviderRequestShape(t *testing.T) {
+	dispatcher := NewALSCompletionDispatcher(nil)
+	device := DeviceLocation{
+		BSSID:              "02:00:00:00:00:21",
+		LatitudeE8:         3400940000,
+		LongitudeE8:        -11849730000,
+		HorizontalAccuracy: 20,
+	}
+	scan := []ScanObservation{{BSSID: device.BSSID, RSSI: -45}}
+
+	if _, err := dispatcher.HandleProviderRequest(
+		WifiPositionProviderRequest{Type: "none", Requester: "default"},
+		scan,
+		DefaultWifiPositionMaxAPs,
+	); err == nil {
+		t.Fatal("expected provider request to fail before cache is primed")
+	}
+
+	if err := dispatcher.Complete(ALSCompletion{
+		Requester: ALSRequesterSnapshot{
+			RequesterToken:  4000001,
+			ProviderCode:    3636,
+			IssuedSerial:    90,
+			CompletedSerial: 89,
+			Lane:            2,
+		},
+		Response: []DeviceLocation{device},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dispatcher.Flush(scan, DefaultWifiPositionMaxAPs); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, lowPriority := range []bool{false, true} {
+		result, err := dispatcher.HandleProviderRequest(
+			WifiPositionProviderRequest{
+				Type:                "none",
+				LowPriority:         lowPriority,
+				Requester:           "default",
+				NumOfRequestedScans: 0,
+			},
+			scan,
+			DefaultWifiPositionMaxAPs,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Trigger != "wifi-position-provider-request" ||
+			result.ProviderRequest == nil ||
+			result.ProviderRequest.LowPriority != lowPriority ||
+			result.Cause != "cached-reevaluation" {
+			t.Fatalf("result=%+v", result)
+		}
+	}
+
+	if _, err := dispatcher.HandleProviderRequest(
+		WifiPositionProviderRequest{
+			Type:                "none",
+			Requester:           "default",
+			NumOfRequestedScans: 1,
+		},
+		scan,
+		DefaultWifiPositionMaxAPs,
+	); err == nil {
+		t.Fatal("expected fresh-scan provider request to be rejected")
+	}
+
+	if _, err := dispatcher.HandleProviderRequest(
+		WifiPositionProviderRequest{Type: "scan", Requester: "default"},
+		scan,
+		DefaultWifiPositionMaxAPs,
+	); err == nil {
+		t.Fatal("expected non-none provider request type to be rejected")
 	}
 }
