@@ -225,10 +225,21 @@ not provide the live scan RSSI values needed by this model.
 
 The unified-log traces show that the os_activity ID is useful for following a
 WifiPosition execution context, but it is not a stable network-request
-identifier. The same ALS requester can be issued under one activity and receive
-its network callbacks under another. The opaque numeric requester token in the
-ALS tuple is the stronger correlation key across queryLocation / unifiedQuery,
-didReceiveResponse, and requesterDidFinish.
+identifier. A CFNetwork task can be created under one ALS activity while some
+transport callback lines temporarily carry activity 0, and the higher-level ALS
+requester can also receive callbacks under a sibling activity.
+
+Three different identifiers therefore describe different layers:
+
+- the CFNetwork task UUID identifies one concrete transport transaction;
+- the opaque requester token identifies one ALS requester/child-completion
+  lifecycle;
+- the monotonic issued serial groups higher-level ALS work and can fan out into
+  several requester tokens and several transport completions.
+
+The requester token is stable from didReceiveResponse through
+requesterDidFinish for a single child completion, but it is not always the same
+token that appeared when the parent query was originally issued.
 
 A successful observed lifecycle has this shape:
 
@@ -264,6 +275,42 @@ In an all-unknown sample, requesterDidFinish -> Network::AlsFinished took about
 18.3 ms. The handler classified the scan, emitted nofix, and entered
 Network::AlsAllUnknown about 0.12 ms later. This strongly supports an in-memory
 async completion dispatch rather than a disk-watcher handoff.
+
+### Transport-owned response parsing
+
+The cleanest 114-record live-scan response exposes the transport/parser handoff
+at sub-millisecond resolution. The registered CFNetwork task is created under
+the active ALS/WifiPosition activity before the corresponding unifiedQuery log.
+When HTTP 200 arrives, CFNetwork briefly logs some callbacks with activity 0,
+but the task and ALS callback return to the original activity context.
+
+Using the trace's approximately 24 MHz mach timebase, one clean transaction
+shows:
+
+- HTTP 200 -> top-level WLOC response summary: about 1.246 ms;
+- response summary -> didReceiveResponse: about 0.004 ms;
+- didReceiveResponse -> first decoded AP record: about 0.021 ms;
+- first -> last of 114 decoded AP records: about 0.257 ms;
+- last AP record -> requesterDidFinish: about 0.026 ms;
+- requesterDidFinish -> Network::AlsFinished: about 6.423 ms.
+
+This ordering means the response body is parsed synchronously inside the
+registered ALS transport callback before requesterDidFinish. There is no
+evidence of a generic file/database inbox that later imports an arbitrary WLOC
+blob.
+
+The requester fan-out is also visible across both captures. One issued serial
+can produce multiple child requester tokens, each with its own
+didReceiveResponse -> requesterDidFinish lifecycle and, where CFNetwork logging
+is complete, a distinct task UUID. The completed serial advances once per child
+completion rather than once per issued serial.
+
+ALSTransportRegistry models this boundary in the controlled lab. A task must be
+registered for an issued serial before a response can be parsed and handed to
+the AP-location service. Child requester tokens may differ from the parent token
+as observed, but the issued serial must match. Completed tasks are one-shot, so
+unregistered responses, serial mismatches, and replay are rejected. The model
+performs no networking and does not invoke private platform APIs.
 
 ### Source classification
 
