@@ -597,3 +597,34 @@ provider request (type=none, no fresh scan requested) -> cached ALS state re-eva
 
 HandleProviderRequest models this event-driven boundary synchronously. It does not
 require or simulate a tile update, and it does not invent a timer.
+
+
+## Observed live WLOC query triggers
+
+The genuine captures expose two different live Wi-Fi lookup triggers. They should not be collapsed into a generic unresolved-scan-means-query rule.
+
+### Stage2 unknownratio
+
+Each of the two parsed live-scan captures contains exactly one finalscan/initialscan/inprogress Stage2 transition. In both captures that transition is immediately followed by the only unknownratio decision and the only unknownratio WLOC request in the capture.
+
+The two positive cases contain 22 and 27 current-scan APs respectively. In both cases the source classification immediately before the decision is tilesals = 0 / 0 / 0 / 100: every current-scan AP is not in the available ALS/tile state.
+
+The observed transition is: nextstage -> Stage2 -> finalscan/initialscan/inprogress -> unknownratio decision -> clientupdate/geofence scan -> serialize the full scan -> WLOC unknownratio query -> ALS unifiedQuery -> Network::AlsRequestResult.
+
+Measured from nextstage, the 27-AP capture reaches the unknownratio decision at about 0.12 ms, completes scan serialization by about 2.89 ms, issues the WLOC query at about 3.05 ms, and reaches Network::AlsRequestResult at about 3.48 ms. The 22-AP capture reaches the decision at about 0.15-0.27 ms, completes scan serialization by about 5.98 ms, issues the WLOC query at about 6.83 ms, and reaches Network::AlsRequestResult at about 7.93 ms.
+
+Later provider/cache passes can still classify a scan as 100-percent not-in-db without issuing another unknownratio request. This includes later passes after the first network response and, in one capture, a later Wi-Fi scan with a different AP count. Therefore 100-percent unresolved is not sufficient by itself. The strongest trace-backed gate is the Stage2 initial/final-scan transition.
+
+The captures do not establish Apple's universal private percentage threshold. LiveWifiLookupTriggerState.EvaluateStage2InitialFinal therefore models only the proven positive case (all current APs not returned) and makes that path one-shot per modeled positioning cycle. It deliberately does not invent a timer, retry interval, or lower threshold.
+
+### WSB_Live
+
+A separate later path appears in the longer capture and does not reuse the Stage2 unknownratio reason. It begins with ScanCache / Aonsensed, enters Wifi::Wsb, evaluates a three-AP live scan group, and finds all three APs not-in-db. WifiPosition then logs WSB_Live, serializes the three APs, creates a new CFNetwork task, and issues a separate ALS unified query.
+
+The compact WSB response contains four Wi-Fi records: all three requested BSSIDs are present; two requested records carry usable Location data; one requested record is returned without Location; and one additional located neighbor/reference BSSID is included even though it was not in the three-AP request.
+
+After requester completion, the shared AP-location state is reprocessed. The three-AP WSB group then classifies two APs as ALS-located and one as unresolved, and a Wi-Fi fix is produced. This is additional evidence that a WLOC response may legally contain neighborhood records beyond the request set.
+
+EvaluateWSBLive models only the observed positive WSB live-pass decision. It is intentionally stateless because the available captures do not establish a general WSB retry/cooldown rule.
+
+A catalog of all /clls/wloc query reasons in these two captures further separates the paths. The captures contain one unknownratio query each, cell-location queries, several coordinate-driven/geofence-nearby queries, and one WSB_Live query in the longer capture. The query reason is therefore meaningful state, not decorative metadata.
