@@ -232,10 +232,11 @@ requester can also receive callbacks under a sibling activity.
 Three different identifiers therefore describe different layers:
 
 - the CFNetwork task UUID identifies one concrete transport transaction;
-- the opaque requester token identifies one ALS requester/child-completion
-  lifecycle;
-- the monotonic issued serial groups higher-level ALS work and can fan out into
-  several requester tokens and several transport completions.
+- the opaque requester token identifies an ALS requester/callback object, but
+  is not a globally unique request ID: the same token can register several
+  issued serials/tasks;
+- the monotonic issued serial identifies one query edge, but completion can
+  still fan out into several requester tokens and transport completions.
 
 The requester token is stable from didReceiveResponse through
 requesterDidFinish for a single child completion, but it is not always the same
@@ -304,6 +305,26 @@ can produce multiple child requester tokens, each with its own
 didReceiveResponse -> requesterDidFinish lifecycle and, where CFNetwork logging
 is complete, a distinct task UUID. The completed serial advances once per child
 completion rather than once per issued serial.
+
+
+The relationship also runs in the opposite direction. Aggregating the two
+captures shows requester objects that span multiple issued serials: in one
+capture, two requester tokens span 2 and 7 issued serials respectively; in the
+other, two span 3 and 7. The registration/completion graph is therefore
+many-to-many rather than a simple parent-child tree. The most stable
+trace-visible transport edge is the concrete CFNetwork task together with its
+issued serial.
+
+One six-child requester batch makes the lifetime gate especially clear. Three
+child HTTP 200 responses arrived before requesterDidFinish (about 131 ms, 35 ms,
+and 31 ms before it), while three other child HTTP 200 responses arrived after
+requesterDidFinish (about 51 ms, 886 ms, and 924 ms later). The checked late
+responses were not followed by a new ALS didReceiveResponse or
+requesterDidFinish callback in the nearby trace window. This shows that HTTP
+success alone does not re-enter ALS after the owning requester lifecycle has
+finished. It does not prove that CFNetwork cancels the child task; in fact the
+late HTTP completions show the transport itself may continue after ALS has
+stopped accepting the result.
 
 ALSTransportRegistry models this boundary in the controlled lab. A task must be
 registered for an issued serial before a response can be parsed and handed to
