@@ -132,6 +132,27 @@ func TestALSTransportRegistryFanoutSameIssuedSerial(t *testing.T) {
 	}
 }
 
+func TestALSTransportRegistryOneRequesterSpansMultipleIssuedSerials(t *testing.T) {
+	registry := NewALSTransportRegistry(nil)
+
+	// Both genuine captures contain requester objects that register several
+	// issued serials/tasks before the requester lifecycle finishes. The token is
+	// therefore not a unique request ID.
+	for _, reg := range []ALSTransportRegistration{
+		{TaskID: "task-serial-a", ActivityID: 1, IssuedSerial: 64, ParentRequesterToken: 7001},
+		{TaskID: "task-serial-b", ActivityID: 1, IssuedSerial: 65, ParentRequesterToken: 7001},
+		{TaskID: "task-serial-c", ActivityID: 1, IssuedSerial: 66, ParentRequesterToken: 7001},
+	} {
+		if err := registry.Register(reg); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if registry.PendingTasks() != 3 {
+		t.Fatalf("pending tasks=%d want=3", registry.PendingTasks())
+	}
+}
+
 func TestALSTransportRegistryRejectsUnregisteredResponse(t *testing.T) {
 	response, _ := transportTestResponse(t)
 	registry := NewALSTransportRegistry(nil)
