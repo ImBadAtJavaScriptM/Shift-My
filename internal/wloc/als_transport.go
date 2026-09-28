@@ -14,10 +14,13 @@ import (
 // may temporarily lose the activity while the task itself remains associated
 // with the query that created it.
 //
-// ParentRequesterToken is the requester token visible when the high-level query
-// is issued. A later response may complete under a different child requester
-// token while preserving IssuedSerial, so token equality is intentionally not
-// required at completion.
+// ParentRequesterToken is the requester token visible when the transport task
+// is registered. The traces show that one requester token may register several
+// issued serials/tasks, while a later response for one issued serial may
+// complete under a different child requester token. ParentRequesterToken is
+// therefore an ownership/correlation hint rather than a globally unique
+// request ID; the registered TaskID + IssuedSerial edge is the stricter
+// transport identity used at completion.
 type ALSTransportRegistration struct {
 	TaskID               string
 	ActivityID           uint64
@@ -92,8 +95,10 @@ func (r *ALSTransportRegistry) Dispatcher() *ALSCompletionDispatcher {
 // dispatcher.
 //
 // IssuedSerial must match the registration, but RequesterToken may differ from
-// ParentRequesterToken. That intentionally represents the observed fan-out in
-// which one issued serial produces several child requester completions.
+// ParentRequesterToken. The observed graph is not one-to-one: one requester
+// token may register several issued serials/tasks, and one issued serial may
+// later fan out into several completion requester tokens. The task registration
+// is therefore the strict edge; requester-token equality is not required.
 func (r *ALSTransportRegistry) Complete(taskID string, requester ALSRequesterSnapshot, responseBytes []byte) (ALSTransportCompletion, error) {
 	key := normalizeALSTaskID(taskID)
 	registration, ok := r.tasks[key]
