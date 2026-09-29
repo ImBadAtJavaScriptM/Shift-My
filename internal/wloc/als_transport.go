@@ -6,24 +6,20 @@ import (
 	"strings"
 )
 
-// ALSTransportRegistration models the trace-visible relationship between one
-// locationd-created network task and the higher-level ALS query that owns it.
+// ALSTransportRegistration models one locationd-created CFNetwork task and the
+// high-level WLOC origin that owns it.
 //
-// TaskID is lab-local opaque text analogous to a CFNetwork task UUID. ActivityID
-// is retained as an execution-context hint only; traces show that callback logs
-// may temporarily lose the activity while the task itself remains associated
-// with the query that created it.
+// IssuedSerial is retained as the ALS serial visible when the task is created.
+// It is a scheduling snapshot, not a strict task identity: genuine live and
+// background tasks were observed completing under later issued serials while
+// keeping the same CFNetwork TaskID and high-level OriginID.
 //
-// ParentRequesterToken is the requester token visible when the transport task
-// is registered. The traces show that one requester token may register several
-// issued serials/tasks, while a later response for one issued serial may
-// complete under a different child requester token. ParentRequesterToken is
-// therefore an ownership/correlation hint rather than a globally unique
-// request ID; the registered TaskID + IssuedSerial edge is the stricter
-// transport identity used at completion.
+// ParentRequesterToken is likewise an ownership hint. One requester can span
+// several serials/tasks, and a response may finish under a child requester.
 type ALSTransportRegistration struct {
 	TaskID               string
 	ActivityID           uint64
+	Origin               ALSQueryOrigin
 	IssuedSerial         int
 	ParentRequesterToken uint64
 }
@@ -33,17 +29,23 @@ type ALSTransportRegistration struct {
 type ALSTransportCompletion struct {
 	Registration        ALSTransportRegistration
 	CompletionRequester ALSRequesterSnapshot
+	Route               ALSConsumerRoute
 	ResponseVersion     uint16
 	ResponseFunctionID  uint32
 	ResponseRecords     int
+	SerialAdvance       int
+	DeliveredToWifi     bool
 }
 
-// ALSTransportRegistry models only task ownership and response acceptance.
-// It performs no networking and never calls private platform APIs.
+// ALSTransportRegistry models only task ownership, origin correlation and
+// response routing. It performs no networking and never calls private platform
+// APIs.
 //
-// The important trace-backed property is that a response is accepted only in
-// the context of a task that was previously created for an ALS query. A valid
-// WLOC byte string delivered outside that task context is not enough.
+// A valid WLOC byte string is accepted only inside a task previously created
+// for a high-level WLOC origin. The response-summary OriginID must match that
+// registered origin. Live-family responses are handed to the WifiPosition lab
+// dispatcher; background-neighborhood responses are parsed/correlated but are
+// deliberately not injected into WifiPosition.
 type ALSTransportRegistry struct {
 	dispatcher *ALSCompletionDispatcher
 	tasks      map[string]ALSTransportRegistration
@@ -69,10 +71,16 @@ func (r *ALSTransportRegistry) Register(registration ALSTransportRegistration) e
 		return errors.New("ALS transport task ID is required")
 	}
 	if registration.IssuedSerial < 0 {
-		return errors.New("ALS issued serial must be non-negative")
+		return errors.New("ALS registration issued serial must be non-negative")
 	}
 	if registration.ParentRequesterToken == 0 {
 		return errors.New("ALS parent requester token is required")
+	}
+	if registration.Origin.OriginID < 0 {
+		return errors.New("ALS origin ID must be non-negative")
+	}
+	if strings.TrimSpace(registration.Origin.Kind) == "" {
+		return errors.New("ALS query origin kind is required")
 	}
 	if _, exists := r.tasks[taskID]; exists {
 		return errors.New("ALS transport task is already registered")
@@ -90,16 +98,22 @@ func (r *ALSTransportRegistry) Dispatcher() *ALSCompletionDispatcher {
 	return r.dispatcher
 }
 
-// Complete parses one WLOC response inside a previously registered task
-// context and then hands the decoded AP records to the normal completion
-// dispatcher.
+// Complete correlates a response with a previously registered task and its
+// high-level origin.
 //
-// IssuedSerial must match the registration, but RequesterToken may differ from
-// ParentRequesterToken. The observed graph is not one-to-one: one requester
-// token may register several issued serials/tasks, and one issued serial may
-// later fan out into several completion requester tokens. The task registration
-// is therefore the strict edge; requester-token equality is not required.
-func (r *ALSTransportRegistry) Complete(taskID string, requester ALSRequesterSnapshot, responseBytes []byte) (ALSTransportCompletion, error) {
+// The completion requester/serial is intentionally allowed to differ from the
+// registration-time requester/serial. In the genuine traces the same CFNetwork
+// task created beside one serial later completed under a newer serial. What
+// remained stable was the TaskID plus the GeneralCLX OriginID.
+//
+// responseSummary is trace-side metadata in this lab model; it is not claimed
+// to be part of the WLOC protobuf payload.
+func (r *ALSTransportRegistry) Complete(
+	taskID string,
+	requester ALSRequesterSnapshot,
+	responseSummary ALSResponseFamilySummary,
+	responseBytes []byte,
+) (ALSTransportCompletion, error) {
 	key := normalizeALSTaskID(taskID)
 	registration, ok := r.tasks[key]
 	if !ok {
@@ -108,34 +122,51 @@ func (r *ALSTransportRegistry) Complete(taskID string, requester ALSRequesterSna
 	if requester.RequesterToken == 0 {
 		return ALSTransportCompletion{}, errors.New("ALS completion requester token is required")
 	}
-	if requester.IssuedSerial != registration.IssuedSerial {
-		return ALSTransportCompletion{}, fmt.Errorf(
-			"ALS completion issued serial %d does not match registered serial %d",
-			requester.IssuedSerial,
-			registration.IssuedSerial,
-		)
+	if requester.IssuedSerial < 0 {
+		return ALSTransportCompletion{}, errors.New("ALS completion issued serial must be non-negative")
+	}
+
+	route, err := CorrelateALSConsumerRoute(registration.Origin, responseSummary)
+	if err != nil {
+		return ALSTransportCompletion{}, fmt.Errorf("correlate ALS response origin: %w", err)
 	}
 
 	version, functionID, devices, err := ParseResponse(responseBytes)
 	if err != nil {
 		return ALSTransportCompletion{}, fmt.Errorf("parse registered ALS response: %w", err)
 	}
-	if err := r.dispatcher.Complete(ALSCompletion{
-		Requester: requester,
-		Response:  devices,
-	}); err != nil {
-		return ALSTransportCompletion{}, err
+	if responseSummary.RecordCount != len(devices) {
+		return ALSTransportCompletion{}, fmt.Errorf(
+			"ALS response summary records %d do not match decoded records %d",
+			responseSummary.RecordCount,
+			len(devices),
+		)
 	}
 
-	// A CFNetwork task is one-shot for the observed WLOC transactions. Remove
-	// the registration only after parsing and dispatch handoff both succeed.
+	deliveredToWifi := false
+	if route.Consumer == "wifi-position-live" {
+		if err := r.dispatcher.Complete(ALSCompletion{
+			Requester: requester,
+			Response:  devices,
+		}); err != nil {
+			return ALSTransportCompletion{}, err
+		}
+		deliveredToWifi = true
+	}
+
+	// One CFNetwork task represents one observed response transaction. Remove
+	// the registration only after origin correlation, parsing, count validation
+	// and any live WifiPosition handoff succeed.
 	delete(r.tasks, key)
 
 	return ALSTransportCompletion{
 		Registration:        registration,
 		CompletionRequester: requester,
+		Route:               route,
 		ResponseVersion:     version,
 		ResponseFunctionID:  functionID,
 		ResponseRecords:     len(devices),
+		SerialAdvance:       requester.IssuedSerial - registration.IssuedSerial,
+		DeliveredToWifi:     deliveredToWifi,
 	}, nil
 }

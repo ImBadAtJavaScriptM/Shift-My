@@ -311,9 +311,12 @@ The relationship also runs in the opposite direction. Aggregating the two
 captures shows requester objects that span multiple issued serials: in one
 capture, two requester tokens span 2 and 7 issued serials respectively; in the
 other, two span 3 and 7. The registration/completion graph is therefore
-many-to-many rather than a simple parent-child tree. The most stable
-trace-visible transport edge is the concrete CFNetwork task together with its
-issued serial.
+many-to-many rather than a simple parent-child tree. Later correlation work
+shows that the issued serial is not a strict task identity: the same concrete
+CFNetwork task can be created beside one issued serial and complete under a
+later one. The stable high-level correlation is the concrete CFNetwork task
+together with its GeneralCLX origin/query ID; the issued serial is retained as
+a scheduling snapshot/hint.
 
 One six-child requester batch makes the lifetime gate especially clear. Three
 child HTTP 200 responses arrived before requesterDidFinish (about 131 ms, 35 ms,
@@ -327,11 +330,15 @@ late HTTP completions show the transport itself may continue after ALS has
 stopped accepting the result.
 
 ALSTransportRegistry models this boundary in the controlled lab. A task must be
-registered for an issued serial before a response can be parsed and handed to
-the AP-location service. Child requester tokens may differ from the parent token
-as observed, but the issued serial must match. Completed tasks are one-shot, so
-unregistered responses, serial mismatches, and replay are rejected. The model
-performs no networking and does not invoke private platform APIs.
+registered for a high-level WLOC origin before a response can be parsed. Child
+requester tokens and the completion-time issued serial may differ from the
+registration-time values, as observed. The response-summary origin ID must
+instead match the task's registered high-level origin. Live-family responses
+are handed to the WifiPosition dispatcher, while background-neighborhood
+responses are correlated and parsed without entering WifiPosition. Completed
+tasks are one-shot, so unregistered responses, origin mismatches, inconsistent
+summary counts, and replay are rejected. The model performs no networking and
+does not invoke private platform APIs.
 
 ### Source classification
 
@@ -649,3 +656,48 @@ After requester completion, the shared AP-location state is reprocessed. The thr
 EvaluateWSBLive models only the observed positive WSB live-pass decision. It is intentionally stateless because the available captures do not establish a general WSB retry/cooldown rule.
 
 A catalog of all /clls/wloc query reasons in these two captures further separates the paths. The captures contain one unknownratio query each, cell-location queries, several coordinate-driven/geofence-nearby queries, and one WSB_Live query in the longer capture. The query reason is therefore meaningful state, not decorative metadata.
+
+
+### High-level WLOC origin and response-family correlation
+
+The parsed traces expose a stable identifier above the ALS requester/transport
+serials. GeneralCLX assigns a high-level origin/query ID when a WLOC lookup is
+created, and the same ID is repeated in the four-field response summary
+immediately before `ALS | didReceiveResponse`.
+
+This correlation held for all 30 response callbacks where both sides were
+visible across the two genuine captures. It is independent of the later ALS
+issued serial, which can fan out across several child requester completions.
+
+Two response families are cleanly separated in the observed data:
+
+- live Wi-Fi-position origins carry no coordinate center and have an explicit
+  reason such as `unknownratio` or `WSB_Live`. Their response-summary family
+  flag is 0. The visible live responses contained 118, 114, and 4 records.
+- coordinate-neighborhood origins carry a query center and feed background
+  place/geofence work. Their response-summary family flag is 1. Every visible
+  response in this family contained 400 records.
+
+The record count is diagnostic rather than the routing key: the lab model does
+not classify a response by size. `CorrelateALSConsumerRoute` instead requires
+the high-level origin ID to match and validates the observed family flag for the
+origin type.
+
+
+The same origin ID remains visible after the response is committed and
+WifiPosition receives `Network::AlsFinished`. In the checked live paths,
+origin IDs 53, 70, and 79 reappear in the immediate post-dispatch WifiPosition
+rows. This provides an end-to-end correlation from high-level request creation
+through transport/parsing and back into the live Wi-Fi consumer.
+
+The ALS issued serial does not have the same lifetime. Concrete CFNetwork tasks
+were observed launching beside serial 71 and completing under 72, launching
+beside 54 and completing under 60, and launching beside 56 and completing
+under 60. A WSB transaction happened to remain 80 -> 80. Serial equality is
+therefore not required by the lab transport model.
+
+This also explains why one ALS issued serial can produce heterogeneous child
+responses. The issued serial is a shared scheduling/fan-out umbrella, while the
+origin/query ID preserves which high-level consumer request a particular child
+response belongs to. The flag values 0 and 1 are trace observations only and
+are not claimed to be Apple's public or private constant names.
